@@ -11,5 +11,5 @@
 | `protocol/openai-chat/` | OpenAI 格式转换器（备用，本期不实现） |
 | `providers/` | 渠道注册表、“模型 × 渠道”元数据、compat profile |
 | `accounts/` | 渠道 credential、额度窗口、冷却、额度连接器 |
-| `enhance/` | 图片转写（M4）、搜索与抓取 MCP |
+| `enhance/` | 搜索与抓取 MCP（M4）；图片转写为后续参考 |
 | `observability/` | 基本请求日志、usage、诊断事件 |

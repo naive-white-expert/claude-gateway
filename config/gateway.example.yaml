@@ -43,6 +43,7 @@ channels:
     baseUrl: https://api.deepseek.com/anthropic
     billing: payg
     apiKeyEnv: DEEPSEEK_API_KEY   # 每个渠道一把 key；同一服务商的另一把 key 另配一个渠道
+    concurrency: null             # 官方按账户限并发（deepseek-flash 2500、deepseek-v4-pro 500），单人远达不到，默认不限；可在对外 ID 上覆盖
     profile:                      # 能力字段必填，加载时校验（方案 §5.3）
       authHeader: x-api-key
       betaStrip: []               # 上游拒收的 anthropic-beta 值，M0 后填写
@@ -55,6 +56,7 @@ channels:
     baseUrl: https://open.bigmodel.cn/api/anthropic
     billing: payg
     apiKeyEnv: ZHIPU_API_KEY
+    concurrency: 5                # 官方按账户权益等级与模型分别限并发，数值在控制台“速率限制”页查看；示例值，请按控制台填写
     profile:
       authHeader: x-api-key
       betaStrip: []
@@ -68,7 +70,7 @@ channels:
     billing: coding-plan
     interactiveOnly: true         # 只承载 cc 发起的交互请求，网关自发调用不走此渠道（方案 §6.3）
     apiKeyEnv: ZHIPU_CODING_API_KEY
-    concurrency: null             # 并发上限是否启用待定（方案 §11）；null 表示不限
+    concurrency: 2                # 官方未公开具体数字（按套餐等级动态，Max > Pro > Lite）；保守默认 2，可调
     profile:
       authHeader: x-api-key
       betaStrip: []
@@ -84,6 +86,7 @@ channels:
     billing: coding-plan
     interactiveOnly: true
     apiKeyEnv: ARK_CODING_API_KEY
+    concurrency: 2                # 文档正文未给出；火山官网文章称 Lite 2 路、Pro 8 路，待控制台确认
     profile:
       authHeader: bearer          # 方舟文档以 ANTHROPIC_AUTH_TOKEN 接入；以 M0 为准
       betaStrip: []
@@ -98,6 +101,7 @@ channels:
     baseUrl: https://ark.cn-beijing.volces.com/api/compatible
     billing: payg
     apiKeyEnv: ARK_API_KEY
+    concurrency: null             # 按量 API 由 RPM / TPM 限流，默认不限
     profile:
       authHeader: bearer
       betaStrip: []
@@ -144,9 +148,9 @@ models:
     channel: zhipu-api
     upstreamModel: glm-5.3
     contextWindow: 200000
-  claude-gw-zp53flash:
-    displayName: GLM-5.3-Flash（智谱按量）
-    channel: zhipu-api              # opus 档 GLM 走哪个渠道待定（方案 §11）
+  claude-gw-zp53flash-plan:
+    displayName: GLM-5.3-Flash（智谱 Coding Plan）
+    channel: zhipu-coding           # 2026-10-27 定：opus 档优先走智谱 Coding Plan
     upstreamModel: glm-5.3-flash
     contextWindow: 1000000          # 官方标注 1M
     maxOutputTokens: 131072         # 官方标注 128K
@@ -172,12 +176,22 @@ clients:
   tiers:
     sonnet: claude-gw-dsflash     # 默认主对话：DeepSeek V4.1 Flash（官方）
     haiku: claude-gw-dsflash      # 后台小任务（起标题、总结等）：同上
-    opus: claude-gw-zp53flash     # GLM-5.3-Flash（智谱按量）
+    opus: claude-gw-zp53flash-plan   # GLM-5.3-Flash（智谱 Coding Plan）
   subagentModel: null             # 生成 CLAUDE_CODE_SUBAGENT_MODEL；null 表示子 agent 跟随主会话模型
   sessionStateTtlHours: 24        # 会话线状态（切换检测、thinking 登记）
 
+limits:
+  # 渠道或对外 ID 上的 concurrency 超限时的行为（方案 §4.3；排队还是立即 429 待定）
+  onConcurrencyExceeded: queue    # queue | reject
+  queueTimeoutMs: 60000           # 排队超时后返回 429，带短 retry-after（cc 会自动重试）
+
+switchAdvice:
+  # 用户切换模型后历史不兼容时，返回带建议的错误（会话专题 §4.8）
+  mode: reactive                  # reactive：上游返回已登记的回放类 400 后给建议；predictive：按 profile 规则预判（需 M0 证实）
+  messageTemplate: null           # 建议文案待用户确认
+
 enhance:
-  vision:                         # M4
+  vision:                         # 后续再议，本期不启用（方案 §12）；以下为将来参考
     enabled: false
     channel: ark-api              # 网关自发调用，不走 Coding Plan
     upstreamModel: doubao-seed-2-1-pro-260628
@@ -188,6 +202,19 @@ enhance:
     timeoutMs: 60000
     concurrency: 4                # 多图并行
     cacheTtlDays: 30              # SQLite 持久化；键含视觉模型、提示词版本、压缩参数版本
+
+# 搜索 / 抓取 MCP（仓库附带，独立进程，不在网关请求路径上；方案 §7.1、§7.2）
+mcp:
+  search:
+    backends:                     # 只启用配置了 key 的后端；key 只用环境变量引用
+      volcengine: { apiKeyEnv: WEB_SEARCH_API_KEY }   # 火山联网搜索专用 key（与方舟模型 key 不通用）
+      bailian:    { apiKeyEnv: BAILIAN_API_KEY }      # deep 第二源；返回的是模型生成的答案，见方案 §7.1
+      tavily:     { apiKeyEnv: TAVILY_API_KEY }       # 海外；国内服务器连通性待测
+      zhipu:      { apiKeyEnv: ZHIPU_API_KEY }        # 可选；用按量 key，不用 Coding Plan key
+    defaultIntensity: normal      # 模型可在每次调用时自选 quick / normal / deep
+  fetch:
+    backends: [linkreader, direct]   # 模型可自选；linkreader 需方舟按量 key
+    defaultMaxChars: 50000
 
 logging:
   level: info
