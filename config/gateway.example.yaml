@@ -34,88 +34,97 @@ channels:
     protocol: anthropic_messages
     baseUrl: https://api.deepseek.com/anthropic
     billing: payg
-    credentials:
-      - { id: ds-main, apiKeyEnv: DEEPSEEK_API_KEY }
+    apiKeyEnv: DEEPSEEK_API_KEY   # 每个渠道一把 key；同一服务商的另一把 key 另配一个渠道
 
   - id: zhipu-api
     protocol: anthropic_messages
     baseUrl: https://open.bigmodel.cn/api/anthropic
     billing: payg
-    credentials:
-      - { id: zhipu-payg, apiKeyEnv: ZHIPU_API_KEY }
+    apiKeyEnv: ZHIPU_API_KEY
 
   - id: zhipu-coding
     protocol: anthropic_messages
     baseUrl: https://open.bigmodel.cn/api/anthropic   # 与 zhipu-api 同一 URL，计费区分待 M0 核实
     billing: coding-plan
     interactiveOnly: true         # 只承载 cc 发起的交互请求，网关自发调用不走此渠道（方案 §6.3）
-    credentials:
-      - { id: zhipu-plan, apiKeyEnv: ZHIPU_CODING_API_KEY, limits: { concurrency: 2 } }
+    apiKeyEnv: ZHIPU_CODING_API_KEY
+    concurrency: 2
     quota:
-      connector: zhipu-coding     # 5h / 周积分
+      connector: zhipu-coding     # 只读展示：5h / 周积分
 
   - id: ark-coding
     protocol: anthropic_messages
     baseUrl: https://ark.cn-beijing.volces.com/api/coding   # 勿用 /api/v3：不走套餐额度且额外计费
     billing: coding-plan
     interactiveOnly: true
-    credentials:
-      - { id: ark-plan, apiKeyEnv: ARK_CODING_API_KEY }
+    apiKeyEnv: ARK_CODING_API_KEY
     quota:
-      connector: ark-coding       # 5h / 周 / 月，查询方式 M2 核实
+      connector: ark-coding       # 只读展示：5h / 周 / 月，查询方式 M2 核实
 
   - id: ark-api                   # 方舟按量，供网关自发调用（如 M4 图片转写）
     protocol: anthropic_messages
     baseUrl: https://ark.cn-beijing.volces.com/api/compatible
     billing: payg
-    credentials:
-      - { id: ark-payg, apiKeyEnv: ARK_API_KEY }
+    apiKeyEnv: ARK_API_KEY
 
 # 对外 ID（键）必须是 Claude 形态：Claude 桌面端会移除含 deepseek/glm/kimi/doubao/seed- 等片段的模型 ID，
-# 加载配置时网关按同一规则校验（docs/桌面端接入.md §2.4）。真实模型与渠道写在 displayName。
-models:                           # 对外 ID → 模型 × 渠道；channels 顺序 = 默认渠道 + 备选
-  claude-gw-pro:
-    displayName: DeepSeek V4 Pro
-    tier: opus                    # 返回 anthropic_family_tier，并写入桌面端配置片段
+# 加载配置时网关按同一规则校验（docs/桌面端接入.md §2.4）。
+# 一个对外 ID = 一个“模型 × 渠道”（无备用渠道）；同一模型的不同渠道各配一个 ID，在桌面端分别列出。
+# displayName 写成“真实模型（渠道）”。渠道失败或额度用完时原样返回错误，由用户在客户端改选。
+models:
+  claude-gw-dsv4pro:
+    displayName: DeepSeek V4 Pro（官方）
+    channel: deepseek
+    upstreamModel: deepseek-v4-pro
     contextWindow: 1000000        # 生成 /v1/models 的 max_input_tokens、桌面端 supports1m、cc 压缩窗口
     maxEffort: max
-    channels:
-      - { channel: deepseek,   upstreamModel: deepseek-v4-pro }
-      - { channel: ark-coding, upstreamModel: deepseek-v4-pro }
-  claude-gw-flash:
-    displayName: DeepSeek Flash
-    tier: haiku
+  claude-gw-dsv4pro-hs:
+    displayName: DeepSeek V4 Pro（火山）
+    channel: ark-coding
+    upstreamModel: deepseek-v4-pro
     contextWindow: 1000000
-    channels:
-      - { channel: deepseek,   upstreamModel: deepseek-flash }
-      - { channel: ark-coding, upstreamModel: deepseek-v4-flash }
-  claude-gw-zhipu:
-    displayName: GLM-5.3
-    tier: sonnet
-    tierDefault: true
-    contextWindow: 200000         # 智谱直连窗口待 M0 核对；方舟渠道文档为 1024k，可按渠道覆盖
-    channels:
-      - { channel: zhipu-coding, upstreamModel: glm-5.3 }
-      - { channel: zhipu-api,    upstreamModel: glm-5.3, fallbackOnly: true }   # 套餐耗尽时的计费回退，需显式开启
-      - { channel: ark-coding,   upstreamModel: glm-5.3, contextWindow: 1000000 }
-  claude-gw-vision:
-    displayName: Doubao Seed 2.1 Pro
+  claude-gw-dsflash:
+    displayName: DeepSeek V4 Flash（官方）
+    channel: deepseek
+    upstreamModel: deepseek-flash
+    contextWindow: 1000000
+  claude-gw-dsflash-hs:
+    displayName: DeepSeek V4 Flash（火山）
+    channel: ark-coding
+    upstreamModel: deepseek-v4-flash
+    contextWindow: 1000000
+  claude-gw-zp53-plan:
+    displayName: GLM-5.3（智谱套餐）
+    channel: zhipu-coding
+    upstreamModel: glm-5.3
+    contextWindow: 200000         # 智谱直连窗口待 M0 核对
+  claude-gw-zp53:
+    displayName: GLM-5.3（智谱按量）
+    channel: zhipu-api
+    upstreamModel: glm-5.3
+    contextWindow: 200000
+  claude-gw-zp53-hs:
+    displayName: GLM-5.3（火山）
+    channel: ark-coding
+    upstreamModel: glm-5.3
+    contextWindow: 1000000        # 方舟文档为 1024k
+  claude-gw-sd21pro-hs:
+    displayName: Doubao Seed 2.1 Pro（火山）
+    channel: ark-coding
+    upstreamModel: doubao-seed-2.1-pro
     contextWindow: 1000000
     inputModalities: [text, image]
-    channels:
-      - { channel: ark-coding, upstreamModel: doubao-seed-2.1-pro }
 
-router:
-  default: claude-gw-pro
-  scenarios:
-    auxiliary: claude-gw-flash
-    subagent: claude-gw-zhipu
-    compaction: claude-gw-pro     # 选窗口足够大的模型
-  stickiness: session             # 会话线 = x-claude-code-session-id + agent-id
-  fallback:
-    on: [429, 5xx, timeout, connect]   # 只在首字节前；只回退到窗口足够的目标
-    allowBillingFallback: false        # Coding Plan → 按量 的回退默认关闭
-  rules: []
+# 场景与模型的对应由客户端档位决定（方案 §4.9）。网关不按场景改模型，
+# 只用这里的默认值生成桌面端 inferenceModels 的 anthropicFamilyTier / isFamilyDefault、
+# /v1/models 的 anthropic_family_tier，以及 cc 的 ANTHROPIC_DEFAULT_*_MODEL。
+clients:
+  tiers:
+    opus: claude-gw-dsv4pro
+    sonnet: claude-gw-zp53-plan
+    haiku: claude-gw-dsflash      # 后台小任务（起标题、总结等）；用哪个模型待定（方案 §11）
+  subagentModel: null             # 生成 CLAUDE_CODE_SUBAGENT_MODEL；null 表示子 agent 跟随主会话模型
+  sessionStateTtlHours: 24        # 会话线状态（切换检测、thinking 登记）
 
 enhance:
   vision:                         # M4
