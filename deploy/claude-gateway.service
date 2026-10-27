@@ -1,0 +1,54 @@
+[Unit]
+Description=claude-gateway (Anthropic Messages gateway for Claude Desktop / Claude Code)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cgw
+Group=cgw
+WorkingDirectory=/opt/claude-gateway
+# 上游 key（DEEPSEEK_API_KEY 等），root 0600；systemd 以 root 读取后注入
+EnvironmentFile=/etc/claude-gateway/secrets.env
+Environment=NODE_ENV=production
+Environment=CGW_CONFIG=/etc/claude-gateway/gateway.yaml
+# TLS 证书与私钥保持 root 0600，由 systemd 以 root 读取后放进只对本服务可读的 $CREDENTIALS_DIRECTORY
+LoadCredential=server.crt:/etc/claude-gateway/tls/server.crt
+LoadCredential=server.key:/etc/claude-gateway/tls/server.key
+LoadCredential=ca.crt:/etc/claude-gateway/tls/ca.crt
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning --max-old-space-size=768 /opt/claude-gateway/dist/server/main.js
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+StateDirectory=claude-gateway
+StateDirectoryMode=0750
+UMask=0027
+# 内存：2C / 4G 机器上留足余量；1M 上下文请求体可达数 MB
+MemoryHigh=900M
+MemoryMax=1200M
+LimitNOFILE=65536
+# 加固
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/claude-gateway
+
+[Install]
+WantedBy=multi-user.target

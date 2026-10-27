@@ -13,7 +13,16 @@
 
 ## 当前状态
 
-**设计阶段，尚无可用实现。** 仓库里目前只有设计文档、配置格式草案和目录骨架。
+**M1 第一版**：`/v1/messages`（流式与非流式）、`/v1/messages/count_tokens`、`/v1/models`，网关 key 鉴权与封禁，模型映射与回显，渠道 profile，超长 / 历史不兼容错误改写，并发上限与排队，三种超时与取消，双向 TLS，`cgw` 命令（key、状态、桌面端与 Claude Code 配置片段）。渠道实测见 [M0 渠道行为实测](docs/M0-渠道行为.md)。目前只有 DeepSeek 官方渠道做过完整实测；智谱与火山方舟的 profile 仍是 M0 前的保守默认值。
+
+```bash
+npm ci                      # .npmrc 使用 npmmirror
+npm test                    # 单元 + 契约测试（脱敏 fixture，不需要真实 key）
+npm run build
+cgw check-config --config config/gateway.yaml
+```
+
+服务器部署见 [`deploy/README.md`](deploy/README.md)。
 
 ## 计划支持的上游
 
@@ -42,17 +51,18 @@
 - [Claude 桌面端接入](docs/桌面端接入.md)：桌面端 3P / Gateway 配置、模型 ID 检查、模型发现、窗口与压缩、与 CLI 的差异（附证据）。
 - [会话管理与模型切换](docs/会话管理与模型切换.md)：Claude Code 原生的切换行为（附证据）与网关侧策略。
 - [参考项目源码调研](docs/research/参考项目源码调研.md)：Claude Code Router 与 deepseek-harness 的版本锁定和源码证据。
-- [配置示例](config/gateway.example.yaml)：配置格式草案。
+- [M0 渠道行为实测](docs/M0-渠道行为.md)：各渠道原生 Anthropic 端点与 Claude Code CLI 的实测行为。
+- [配置示例](config/gateway.example.yaml)：配置格式（能力字段必填）。
 
 ## 目录
 
 ```text
 docs/            方案与调研
 config/          配置示例
-deploy/          部署示例（反代机 nginx 配置等）
-src/             模块骨架（见 src/README.md）
+deploy/          部署脚本、systemd unit、反代机 nginx 示例
+src/             实现（见 src/README.md）
 test/            契约测试与脱敏 fixture
-scripts/         辅助脚本
+scripts/         辅助脚本（M0 探测与抓包）
 ```
 
 ## 约定

@@ -1,31 +1,32 @@
-# claude-gateway 配置示例（草案，字段以 docs/方案-v0.1.md §5.3、§8.3、§8.4 为准，实现时可能调整）
+# claude-gateway 配置示例。字段说明见 docs/方案-v0.1.md §5.3、§8.3、§8.4，渠道实测行为见 docs/M0-渠道行为.md。
 # 原则：密钥一律通过环境变量（0600 环境文件 / systemd credentials）引用，本文件不出现明文。
-#       真实配置另存为 config/gateway.yaml 或 config/*.local.yaml（已被 .gitignore 忽略）。
+#       真实配置另存为 config/gateway.yaml 或 config/*.local.yaml（已被 .gitignore 忽略），服务器上为 /etc/claude-gateway/gateway.yaml。
+# 校验：cgw check-config --config <路径>。未知字段、缺少能力字段都会拒绝启动。
 
 # 公网入口方式见方案 §8.5。
 server:
   # 本机 TLS：host 127.0.0.1、tls.enabled false，由本机 nginx / Caddy 对外提供 TLS。
-  # 经反代：网关直接以 HTTPS 监听非标准端口，反代机以证书固定（可选双向 TLS）转发过来。
+  # 经反代：网关直接以 HTTPS 监听非标准端口，反代机以证书固定（推荐双向 TLS）转发过来。
   host: 0.0.0.0                   # 经反代时监听公网网卡；安全组只放行反代机 IP 到该端口
   port: 8443
   tls:
     enabled: true
+    # 路径可引用环境变量，例如 systemd LoadCredential= 时写 ${CREDENTIALS_DIRECTORY}/server.key
     certFile: /etc/claude-gateway/tls/server.crt   # 自建小 CA 签发的长期证书，SAN 例如 gateway.internal
     keyFile: /etc/claude-gateway/tls/server.key    # 0600
-    clientCa: /etc/claude-gateway/tls/ca.crt       # 双向 TLS（推荐）：只接受该 CA 签发的客户端证书
+    clientCa: /etc/claude-gateway/tls/ca.crt       # 双向 TLS：只接受该 CA 签发的客户端证书
     requireClientCert: true
-  publicBaseUrl: https://gateway.example.com   # 替换为你的域名，用于生成 cc settings 片段
-  maxRequestBodyMB: 64            # 1M 上下文请求体可达数 MB，含图片更大；与反代的 client_max_body_size 一致
-  upstreamTimeoutMs: 600000
-  idleStreamTimeoutMs: 120000
-  pingIntervalMs: 15000
+    allowedClientCNs: [cgw-proxy-example]          # 可选：再限定客户端证书 CN
+  publicBaseUrl: https://gateway.example.com   # 替换为你的域名，用于生成客户端配置片段
+  maxRequestBodyMB: 64            # 与反代的 client_max_body_size 一致
+  pingIntervalMs: 15000           # 流式响应中上游无字节超过该间隔时由网关发 ping
+  stateDir: /var/lib/claude-gateway   # SQLite（key 哈希、请求日志元数据、会话线状态、thinking 来源登记）
 
 security:
   keys:
-    store: sqlite                 # 只存 SHA-256 哈希与元数据；明文仅在 `cgw key create` 时显示一次
-    acceptHeaders: [authorization, x-api-key]
+    acceptHeaders: [authorization, x-api-key]   # 网关 key 由 `cgw key create` 签发，只存 SHA-256 哈希
   rateLimit:
-    perKey: { rpm: 120, concurrency: 8 }
+    perKey: { rpm: 240 }
     perIpUnauthenticated: { rpm: 30 }
   authFailure:
     banAfter: 5                   # 同一 IP 窗口内失败次数
@@ -37,19 +38,32 @@ security:
   trustProxyHeaders: true         # 经反代时开启，用于取真实客户端 IP
   trustedProxies: [203.0.113.10]  # 只填反代机的公网 IP（示例为文档保留地址）
 
+# profile 字段（渠道一级，能力字段必填）：
+#   authHeader            上游认证头：x-api-key / bearer
+#   betaStrip             上游会拒收的 anthropic-beta 值
+#   thinkingReplay        用户切换模型后历史 thinking 的处理：passthrough / keep-unsigned / strip-foreign（会话专题 §4.2）
+#   redactedThinking      是否接受 redacted_thinking
+#   timeouts              connectMs / firstByteMs（到首个内容事件）/ idleMs（流开始后两次数据的最长间隔）
+#   countTokens           upstream（转发上游原生 count_tokens；Coding Plan 渠道不会转发）/ estimate（本地估算）
+#   metadataUserId        strip（默认，cc 的 user_id 含设备与账号标识）/ passthrough
+#   overlongPatterns      追加的非 Anthropic 超长错误正则（命名组 req、max），内置规则见 src/config/load.ts
+#   replayErrorPatterns   追加的“切换后历史不兼容”错误正则
+#   signatureErrorPatterns  追加的签名类错误正则（改写为 cc 能识别的措辞）
 channels:
   - id: deepseek
     protocol: anthropic_messages
     baseUrl: https://api.deepseek.com/anthropic
     billing: payg
     apiKeyEnv: DEEPSEEK_API_KEY   # 每个渠道一把 key；同一服务商的另一把 key 另配一个渠道
-    concurrency: null             # 官方按账户限并发（deepseek-flash 2500、deepseek-v4-pro 500），单人远达不到，默认不限；可在对外 ID 上覆盖
-    profile:                      # 能力字段必填，加载时校验（方案 §5.3）
-      authHeader: x-api-key
-      betaStrip: []               # 上游拒收的 anthropic-beta 值，M0 后填写
-      thinkingReplay: keep-unsigned   # thinking 模式下要求历史 thinking 回传（会话专题 §4.2）
-      redactedThinking: unsupported
+    concurrency: null             # 官方按账户限并发（deepseek-flash 2500、deepseek-v4-pro 500），单人远达不到，默认不限
+    profile:
+      authHeader: x-api-key       # M0：x-api-key 与 Bearer 均可
+      betaStrip: []               # M0：cc 2.1.309 发送的 beta 值与 context-1m 等全部接受
+      thinkingReplay: passthrough # M0：接受任意来源的 thinking（有无签名均可），且工具调用轮必须回传 thinking
+      redactedThinking: unsupported   # M0：redacted_thinking 返回 422
       timeouts: { connectMs: 10000, firstByteMs: 600000, idleMs: 120000 }
+      countTokens: upstream       # M0：原生 /v1/messages/count_tokens 可用
+      metadataUserId: strip
 
   - id: zhipu-api
     protocol: anthropic_messages
@@ -58,27 +72,29 @@ channels:
     apiKeyEnv: ZHIPU_API_KEY
     concurrency: 5                # 官方按账户权益等级与模型分别限并发，数值在控制台“速率限制”页查看；示例值，请按控制台填写
     profile:
-      authHeader: x-api-key
+      authHeader: x-api-key       # M0（仅到 401 阶段）：x-api-key 与 Bearer 均被识别
       betaStrip: []
-      thinkingReplay: strip-foreign   # M0 前的默认值
-      redactedThinking: unsupported   # 待 M0
+      thinkingReplay: strip-foreign   # 待有 key 后 M0 实测
+      redactedThinking: unsupported
       timeouts: { connectMs: 10000, firstByteMs: 600000, idleMs: 120000 }
+      countTokens: estimate
 
   - id: zhipu-coding
     protocol: anthropic_messages
-    baseUrl: https://open.bigmodel.cn/api/anthropic   # 与 zhipu-api 同一 URL，计费区分待 M0 核实
+    baseUrl: https://open.bigmodel.cn/api/anthropic   # 与 zhipu-api 同一 URL，计费由 key 所属账号 / 套餐决定（待 M0）
     billing: coding-plan
     interactiveOnly: true         # 只承载 cc 发起的交互请求，网关自发调用不走此渠道（方案 §6.3）
     apiKeyEnv: ZHIPU_CODING_API_KEY
-    concurrency: 2                # 官方未公开具体数字（按套餐等级动态，Max > Pro > Lite）；保守默认 2，可调
+    concurrency: 2                # 官方未公开具体数字（按套餐等级动态）；保守默认 2，可调
     profile:
       authHeader: x-api-key
       betaStrip: []
       thinkingReplay: strip-foreign
       redactedThinking: unsupported
       timeouts: { connectMs: 10000, firstByteMs: 600000, idleMs: 120000 }
+      countTokens: estimate
     quota:
-      connector: zhipu-coding     # 只读展示：5h / 周积分
+      connector: zhipu-coding     # M2：只读展示 5h / 周积分
 
   - id: ark-coding
     protocol: anthropic_messages
@@ -88,66 +104,39 @@ channels:
     apiKeyEnv: ARK_CODING_API_KEY
     concurrency: 2                # 文档正文未给出；火山官网文章称 Lite 2 路、Pro 8 路，待控制台确认
     profile:
-      authHeader: bearer          # 方舟文档以 ANTHROPIC_AUTH_TOKEN 接入；以 M0 为准
+      authHeader: bearer          # M0（仅到 401 阶段）：x-api-key 与 Bearer 均被识别
       betaStrip: []
-      thinkingReplay: strip-foreign   # 方舟上的 DeepSeek / Kimi 是否需要 keep-unsigned，待 M0（可在对外 ID 上覆盖）
+      thinkingReplay: strip-foreign   # 方舟上的 DeepSeek / Kimi 是否需要 passthrough，待有 key 后 M0
       redactedThinking: unsupported
       timeouts: { connectMs: 10000, firstByteMs: 600000, idleMs: 120000 }
+      countTokens: estimate
     quota:
-      connector: ark-coding       # 只读展示：5h / 周 / 月，查询方式 M2 核实
-
-  - id: ark-api                   # 方舟按量，供网关自发调用（如 M4 图片转写）
-    protocol: anthropic_messages
-    baseUrl: https://ark.cn-beijing.volces.com/api/compatible
-    billing: payg
-    apiKeyEnv: ARK_API_KEY
-    concurrency: null             # 按量 API 由 RPM / TPM 限流，默认不限
-    profile:
-      authHeader: bearer
-      betaStrip: []
-      thinkingReplay: strip-foreign
-      redactedThinking: unsupported
-      timeouts: { connectMs: 10000, firstByteMs: 600000, idleMs: 120000 }
+      connector: ark-coding
 
 # 对外 ID（键）必须是 Claude 形态：Claude 桌面端会移除含 deepseek/glm/kimi/doubao/seed- 等片段的模型 ID，
 # 加载配置时网关按同一规则校验（docs/桌面端接入.md §2.4）。
-# 一个对外 ID = 一个“模型 × 渠道”（无备用渠道）；同一模型的不同渠道各配一个 ID，在桌面端分别列出。
-# displayName 写成“真实模型（渠道）”。渠道失败或额度用完时原样返回错误，由用户在客户端改选。
+# 一个对外 ID = 一个“模型 × 渠道”（无备用渠道）；displayName 写成“真实模型（渠道）”。
+# 能力字段必填：contextWindow、maxOutputTokens、inputModalities、thinking（optional / always-on / none）、maxEffort。
+# 可选：concurrency（覆盖渠道值）、autoCompactWindow（生成 cc 压缩窗口；默认取 contextWindow 的 75%）。
 models:
-  claude-gw-dsv4pro:
-    displayName: DeepSeek V4 Pro（官方）
-    channel: deepseek
-    upstreamModel: deepseek-v4-pro
-    contextWindow: 1000000        # 生成 /v1/models 的 max_input_tokens、桌面端 supports1m、cc 压缩窗口
-    maxEffort: max
-  claude-gw-dsv4pro-hs:
-    displayName: DeepSeek V4 Pro（火山）
-    channel: ark-coding
-    upstreamModel: deepseek-v4-pro
-    contextWindow: 1000000
   claude-gw-dsflash:
     displayName: DeepSeek V4.1 Flash（官方）
     channel: deepseek
     upstreamModel: deepseek-flash   # 官方名，当前由 DeepSeek-V4.1-Flash-1017 提供服务
-    contextWindow: 1048576          # 输入 + 输出合计；官方 /models 示例
+    contextWindow: 1048576          # 输入 + 输出合计（M0 超长报错原文中的上限）
     maxOutputTokens: 393216
     inputModalities: [text, image]
-    maxEffort: max                  # 支持 low / high / max，默认 high
-  claude-gw-dsflash-hs:
-    displayName: DeepSeek V4 Flash（火山）
-    channel: ark-coding
-    upstreamModel: deepseek-v4-flash
-    contextWindow: 1000000
-  claude-gw-zp53-plan:
-    displayName: GLM-5.3（智谱套餐）
-    channel: zhipu-coding
-    upstreamModel: glm-5.3
-    contextWindow: 200000         # 智谱直连窗口待 M0 核对
-  claude-gw-zp53:
-    displayName: GLM-5.3（智谱按量）
-    channel: zhipu-api
-    upstreamModel: glm-5.3
-    contextWindow: 200000
+    thinking: optional              # 默认开启，可关闭
+    maxEffort: max                  # 支持 low / high / max
+  claude-gw-dsv4pro:
+    displayName: DeepSeek V4 Pro（官方）
+    channel: deepseek
+    upstreamModel: deepseek-v4-pro
+    contextWindow: 1048576
+    maxOutputTokens: 393216
+    inputModalities: [text]
+    thinking: optional
+    maxEffort: max
   claude-gw-zp53flash-plan:
     displayName: GLM-5.3-Flash（智谱 Coding Plan）
     channel: zhipu-coding           # 2026-10-27 定：opus 档优先走智谱 Coding Plan
@@ -156,22 +145,39 @@ models:
     maxOutputTokens: 131072         # 官方标注 128K
     inputModalities: [text, image]  # 官方模型页为原生多模态；经 Anthropic 兼容端点传图待 M0
     thinking: always-on             # thinking.type 仅支持 enabled
-  claude-gw-zp53-hs:
-    displayName: GLM-5.3（火山）
+    maxEffort: max
+  claude-gw-zp53flash:
+    displayName: GLM-5.3-Flash（智谱按量）
+    channel: zhipu-api
+    upstreamModel: glm-5.3-flash
+    contextWindow: 1000000
+    maxOutputTokens: 131072
+    inputModalities: [text, image]
+    thinking: always-on
+    maxEffort: max
+  claude-gw-dsv4pro-hs:
+    displayName: DeepSeek V4 Pro（火山）
     channel: ark-coding
-    upstreamModel: glm-5.3
-    contextWindow: 1000000        # 方舟文档为 1024k
+    upstreamModel: deepseek-v4-pro
+    contextWindow: 1000000          # 方舟文档为 1024k，待 M0
+    maxOutputTokens: 131072
+    inputModalities: [text]
+    thinking: optional
+    maxEffort: max
   claude-gw-sd21pro-hs:
     displayName: Doubao Seed 2.1 Pro（火山）
     channel: ark-coding
     upstreamModel: doubao-seed-2.1-pro
     contextWindow: 1000000
+    maxOutputTokens: 131072
     inputModalities: [text, image]
+    thinking: optional
+    maxEffort: high
 
 # 场景与模型的对应由客户端档位决定（方案 §4.9）。网关不按场景改模型，
 # 只用这里的默认值生成桌面端 inferenceModels 的 anthropicFamilyTier / isFamilyDefault、
 # /v1/models 的 anthropic_family_tier，以及 cc 的 ANTHROPIC_DEFAULT_*_MODEL。
-# 以下是默认值（2026-10-27），使用者可以在这里改成任何已配置的对外 ID；主对话仍可在桌面端随时切换。
+# 两个档位指向同一个对外 ID 时，后出现的档位自动得到档位别名 <ID>-<档位>（例如 claude-gw-dsflash-haiku）。
 clients:
   tiers:
     sonnet: claude-gw-dsflash     # 默认主对话：DeepSeek V4.1 Flash（官方）
@@ -181,29 +187,25 @@ clients:
   sessionStateTtlHours: 24        # 会话线状态（切换检测、thinking 登记）
 
 limits:
-  # 渠道或对外 ID 上的 concurrency 超限时（方案 §4.3、§4.12，2026-10-27 定）
-  onConcurrencyExceeded: queue    # 先排队
-  queueTimeoutMs: 60000           # 最多 60s
-  rejectStatus: 429               # 超时后返回 rate_limit_error
+  # concurrency 超限时先排队，最多 queueTimeoutMs，之后返回 429 + retry-after（方案 §4.3、§4.12）
+  queueTimeoutMs: 60000
+  rejectStatus: 429
   rejectRetryAfterSec: 120        # 大于 60：cc 不再静默重试，立即显示错误
-  # 提示文案（2026-10-27 用户确认，原文不改）：{模型显示名} 为对外 ID 显示名，{N} 为其 concurrency
-  rejectMessage: "「{模型显示名}」当前同时进行中的请求已达上限（{N} 个，包括主对话和子任务），本次请求排队 60 秒后仍未轮到，已取消。可以稍后重发，或在模型选择器中切换到其他模型继续。（诊断码 cgw_concurrency_limit）"
+  # rejectMessage 默认即 2026-10-27 用户确认的原文（src/config/texts.ts），一般不需要配置
   responseHeaders: ietf-draft     # 附加 RateLimit-Policy / RateLimit 头；不伪造 anthropic-ratelimit-unified-*
 
 concurrencyHint:
   # 把并发限制告诉模型（方案 §4.12）
-  clientMaxToolUseConcurrency: auto   # 写入生成的 settings env：CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY = 常用对外 ID 的上限 - 1
-  injectSystemPrompt: auto        # auto：配置了 concurrency 的对外 ID 开启、未配置的不注入；false 关闭（2026-10-27 定）
+  clientMaxToolUseConcurrency: auto   # 生成 settings env 的 CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY：sonnet 档模型的上限 - 1；不限时不写
+  injectSystemPrompt: auto        # auto：配置了 concurrency 的对外 ID 开启、未配置的不注入；false 关闭
   injectFor: [main, subagent]     # 后台小任务不注入
-  # 注入文本（2026-10-27 用户确认，原文不改）：追加为 system 最后一个文本块，不带 cache_control；{N} 为该对外 ID 的 concurrency
-  textTemplate: "[claude-gateway] 你当前使用的模型渠道同时最多处理 {N} 个请求（主对话与所有子 agent 合计）。并行启动子 agent 或批量并行调用工具时，请让同时运行的子 agent 不超过 {N-1} 个；任务较多时分批进行，等前一批完成后再启动下一批。超出上限的请求会排队，排队超过 60 秒会失败。"
+  # textTemplate 默认即用户确认的原文（src/config/texts.ts）
 
 switchAdvice:
-  # 用户切换模型后历史不兼容时，返回带建议的错误（会话专题 §4.8）
-  mode: reactive                  # reactive：上游返回已登记的回放类 400 后给建议；predictive：按 profile 规则预判（需 M0 证实）
-  # 建议文案（2026-10-27 用户确认，原文不改）：{原模型}、{新模型} 为对外 ID 显示名
-  messageTemplate: "切换到「{新模型}」后，这段对话里由「{原模型}」产生的历史记录（思考过程或工具调用记录）不被新模型接受，本轮无法继续。你可以：① 压缩后继续——先切回「{原模型}」，发送 /compact，完成后再切到「{新模型}」；② 新建一个对话，直接使用「{新模型}」。（诊断码 cgw_history_incompatible）"
+  mode: reactive                  # 上游返回已登记的回放类 400 后给建议（会话专题 §4.8）
+  # messageTemplate 默认即用户确认的原文（src/config/texts.ts）
 
+# —— 后续里程碑（M4）的配置草案，本期网关不读取 ——
 enhance:
   vision:                         # 后续再议，本期不启用（方案 §12）；以下为将来参考
     enabled: false
@@ -233,6 +235,6 @@ mcp:
 
 logging:
   level: info
-  requestLog: metadata            # 本期只记元数据：时间、会话、模型×渠道、状态、耗时、usage、诊断
+  requestLog: metadata            # 只记元数据：时间、会话、模型×渠道、状态、耗时、usage、诊断
   bodies: off
   retentionDays: 14
