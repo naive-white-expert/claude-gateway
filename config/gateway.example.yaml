@@ -186,7 +186,8 @@ limits:
   queueTimeoutMs: 60000           # 最多 60s
   rejectStatus: 429               # 超时后返回 rate_limit_error
   rejectRetryAfterSec: 120        # 大于 60：cc 不再静默重试，立即显示错误
-  rejectMessage: null             # 提示文案待用户确认；诊断码 cgw_concurrency_limit
+  # 提示文案（2026-10-27 用户确认，原文不改）：{模型显示名} 为对外 ID 显示名，{N} 为其 concurrency
+  rejectMessage: "「{模型显示名}」当前同时进行中的请求已达上限（{N} 个，包括主对话和子任务），本次请求排队 60 秒后仍未轮到，已取消。可以稍后重发，或在模型选择器中切换到其他模型继续。（诊断码 cgw_concurrency_limit）"
   responseHeaders: ietf-draft     # 附加 RateLimit-Policy / RateLimit 头；不伪造 anthropic-ratelimit-unified-*
 
 concurrencyHint:
@@ -200,7 +201,8 @@ concurrencyHint:
 switchAdvice:
   # 用户切换模型后历史不兼容时，返回带建议的错误（会话专题 §4.8）
   mode: reactive                  # reactive：上游返回已登记的回放类 400 后给建议；predictive：按 profile 规则预判（需 M0 证实）
-  messageTemplate: null           # 建议文案待用户确认
+  # 建议文案（2026-10-27 用户确认，原文不改）：{原模型}、{新模型} 为对外 ID 显示名
+  messageTemplate: "切换到「{新模型}」后，这段对话里由「{原模型}」产生的历史记录（思考过程或工具调用记录）不被新模型接受，本轮无法继续。你可以：① 压缩后继续——先切回「{原模型}」，发送 /compact，完成后再切到「{新模型}」；② 新建一个对话，直接使用「{新模型}」。（诊断码 cgw_history_incompatible）"
 
 enhance:
   vision:                         # 后续再议，本期不启用（方案 §12）；以下为将来参考
