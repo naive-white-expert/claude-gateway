@@ -192,9 +192,10 @@ limits:
 concurrencyHint:
   # 把并发限制告诉模型（方案 §4.12）
   clientMaxToolUseConcurrency: auto   # 写入生成的 settings env：CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY = 常用对外 ID 的上限 - 1
-  injectSystemPrompt: true        # 在 system 末尾追加静态说明（无 cache_control）；默认开或关待用户定
+  injectSystemPrompt: auto        # auto：配置了 concurrency 的对外 ID 开启、未配置的不注入；false 关闭（2026-10-27 定）
   injectFor: [main, subagent]     # 后台小任务不注入
-  textTemplate: null              # 注入文本待用户过目；只允许引用配置中的静态值（如 {concurrency}）
+  # 注入文本（2026-10-27 用户确认，原文不改）：追加为 system 最后一个文本块，不带 cache_control；{N} 为该对外 ID 的 concurrency
+  textTemplate: "[claude-gateway] 你当前使用的模型渠道同时最多处理 {N} 个请求（主对话与所有子 agent 合计）。并行启动子 agent 或批量并行调用工具时，请让同时运行的子 agent 不超过 {N-1} 个；任务较多时分批进行，等前一批完成后再启动下一批。超出上限的请求会排队，排队超过 60 秒会失败。"
 
 switchAdvice:
   # 用户切换模型后历史不兼容时，返回带建议的错误（会话专题 §4.8）
