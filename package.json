@@ -1,0 +1,30 @@
+{
+  "name": "claude-gateway",
+  "version": "0.1.0",
+  "description": "Self-hosted gateway that lets Claude Desktop (Code mode) and Claude Code use Chinese model providers via their native Anthropic endpoints.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
+  "bin": {
+    "cgw": "dist/cli/cgw.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "start": "node --disable-warning=ExperimentalWarning dist/server/main.js"
+  },
+  "dependencies": {
+    "undici": "^7.16.0",
+    "yaml": "^2.8.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

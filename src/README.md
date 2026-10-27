@@ -1,15 +1,18 @@
-# src 模块骨架
+# src 模块
 
-各模块职责见[方案 §8.2](../docs/方案-v0.1.md#82-模块与目录)。技术栈已定为 Node.js / TypeScript；目前只有空目录，M1 开始时再初始化工程。
+各模块职责见[方案 §8.2](../docs/方案-v0.1.md#82-模块与目录)。
 
 | 目录 | 职责 |
 |---|---|
-| `server/` | HTTP 入站、端点分发、SSE 输出 |
-| `auth/` | 网关 key 校验、限流、IP 白名单、认证失败记录（边界防护） |
-| `router/` | 场景识别、规则引擎、会话状态与切换分类、回退 |
-| `protocol/anthropic/` | Messages 校验、原生透传与 compat 应用 |
-| `protocol/openai-chat/` | OpenAI 格式转换器（备用，本期不实现） |
-| `providers/` | 渠道注册表、“模型 × 渠道”元数据、compat profile |
-| `accounts/` | 渠道 credential、额度窗口、冷却、额度连接器 |
-| `enhance/` | 搜索与抓取 MCP（M4）；图片转写为后续参考 |
-| `observability/` | 基本请求日志、usage、诊断事件 |
+| `server/` | HTTP(S) 入站与双向 TLS（`main.ts`）、端点分发、`/v1/messages` 流式与非流式转发、`/v1/models`、`count_tokens`（`app.ts`） |
+| `auth/` | 网关 key 签发与校验（只存哈希）、按 key / IP 限流、认证失败封禁、IP 白名单、受信反代的真实 IP |
+| `config/` | YAML + zod 配置校验（能力字段必填）、桌面端模型 ID 规则、已确认的用户文案 |
+| `router/` | 会话线识别与切换检测、thinking 来源登记 |
+| `protocol/anthropic/` | 出站请求改写（模型映射、`metadata.user_id`、`max_tokens`、thinking 过滤、并发说明注入、工具配对校验）、上游错误措辞改写、SSE 回流、token 估算 |
+| `providers/` | 出站请求头（认证替换、beta 过滤、`x-claude-code-*` 不转发）、上游连接池与超时 |
+| `limits/` | 按对外 ID 的并发上限与排队 |
+| `observability/` | 结构化日志（脱敏）、请求日志元数据、改写诊断 |
+| `store/` | SQLite（Node 内置 `node:sqlite`） |
+| `clients/` | 桌面端与 Claude Code 配置片段生成 |
+| `cli/` | `cgw` 命令 |
+| `protocol/openai-chat/`、`accounts/`、`enhance/` | 备用 / 后续里程碑（M2 额度、M3、M4），本期为空 |
