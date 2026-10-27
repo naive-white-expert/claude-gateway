@@ -1,0 +1,124 @@
+# claude-gateway 配置示例（草案，字段以 docs/方案-v0.1.md §5.3、§8.3、§8.4 为准，实现时可能调整）
+# 原则：密钥一律通过环境变量（0600 环境文件 / systemd credentials）引用，本文件不出现明文。
+#       真实配置另存为 config/gateway.yaml 或 config/*.local.yaml（已被 .gitignore 忽略）。
+
+# 公网入口方式见方案 §8.5。
+server:
+  host: 127.0.0.1                 # 只监听回环；TLS 在边缘终结（本机 nginx / Caddy，或经加密链路的反代）
+  port: 3456
+  publicBaseUrl: https://gateway.example.com   # 替换为你的域名，用于生成 cc settings 片段
+  maxRequestBodyMB: 32
+  upstreamTimeoutMs: 600000
+  idleStreamTimeoutMs: 120000
+  pingIntervalMs: 15000
+
+security:
+  keys:
+    store: sqlite                 # 只存 SHA-256 哈希与元数据；明文仅在 `cgw key create` 时显示一次
+    acceptHeaders: [authorization, x-api-key]
+  rateLimit:
+    perKey: { rpm: 120, concurrency: 8 }
+    perIpUnauthenticated: { rpm: 30 }
+  authFailure:
+    banAfter: 5                   # 同一 IP 窗口内失败次数
+    windowSec: 300
+    banSec: [600, 3600, 86400]    # 指数退避
+  ipAllowlist:
+    enabled: false
+    cidrs: []
+  trustProxyHeaders: false        # 仅当经可信反代时开启，用于取真实客户端 IP
+  trustedProxies: []              # 经反代时填反代的内网 / 隧道地址
+
+channels:
+  - id: deepseek
+    protocol: anthropic_messages
+    baseUrl: https://api.deepseek.com/anthropic
+    billing: payg
+    credentials:
+      - { id: ds-main, apiKeyEnv: DEEPSEEK_API_KEY }
+
+  - id: zhipu-api
+    protocol: anthropic_messages
+    baseUrl: https://open.bigmodel.cn/api/anthropic
+    billing: payg
+    credentials:
+      - { id: zhipu-payg, apiKeyEnv: ZHIPU_API_KEY }
+
+  - id: zhipu-coding
+    protocol: anthropic_messages
+    baseUrl: https://open.bigmodel.cn/api/anthropic   # 与 zhipu-api 同一 URL，计费区分待 M0 核实
+    billing: coding-plan
+    interactiveOnly: true         # 只承载 cc 发起的交互请求，网关自发调用不走此渠道（方案 §6.3）
+    credentials:
+      - { id: zhipu-plan, apiKeyEnv: ZHIPU_CODING_API_KEY, limits: { concurrency: 2 } }
+    quota:
+      connector: zhipu-coding     # 5h / 周积分
+
+  - id: ark-coding
+    protocol: anthropic_messages
+    baseUrl: https://ark.cn-beijing.volces.com/api/coding   # 勿用 /api/v3：不走套餐额度且额外计费
+    billing: coding-plan
+    interactiveOnly: true
+    credentials:
+      - { id: ark-plan, apiKeyEnv: ARK_CODING_API_KEY }
+    quota:
+      connector: ark-coding       # 5h / 周 / 月，查询方式 M2 核实
+
+  - id: ark-api                   # 方舟按量，供网关自发调用（如 M4 图片转写）
+    protocol: anthropic_messages
+    baseUrl: https://ark.cn-beijing.volces.com/api/compatible
+    billing: payg
+    credentials:
+      - { id: ark-payg, apiKeyEnv: ARK_API_KEY }
+
+models:                           # 模型 × 渠道；channels 顺序 = 默认渠道 + 备选
+  deepseek-v4-pro:
+    displayName: DeepSeek V4 Pro
+    contextWindow: 1000000
+    channels:
+      - { channel: deepseek,   upstreamModel: deepseek-v4-pro }
+      - { channel: ark-coding, upstreamModel: deepseek-v4-pro }
+  deepseek-flash:
+    displayName: DeepSeek Flash
+    contextWindow: 1000000
+    channels:
+      - { channel: deepseek,   upstreamModel: deepseek-flash }
+      - { channel: ark-coding, upstreamModel: deepseek-v4-flash }
+  glm-5.3:
+    displayName: GLM-5.3
+    contextWindow: 200000         # 智谱直连窗口待 M0 核对；方舟渠道文档为 1024k，可按渠道覆盖
+    channels:
+      - { channel: zhipu-coding, upstreamModel: glm-5.3 }
+      - { channel: zhipu-api,    upstreamModel: glm-5.3, fallbackOnly: true }   # 套餐耗尽时的计费回退，需显式开启
+      - { channel: ark-coding,   upstreamModel: glm-5.3, contextWindow: 1000000 }
+  doubao-seed-2.1-pro:
+    displayName: Doubao Seed 2.1 Pro
+    contextWindow: 1000000
+    inputModalities: [text, image]
+    channels:
+      - { channel: ark-coding, upstreamModel: doubao-seed-2.1-pro }
+
+router:
+  default: deepseek-v4-pro
+  scenarios:
+    auxiliary: deepseek-flash
+    subagent: glm-5.3
+    compaction: deepseek-v4-pro   # 选窗口足够大的模型
+  stickiness: session             # 会话线 = x-claude-code-session-id + agent-id
+  fallback:
+    on: [429, 5xx, timeout, connect]   # 只在首字节前；只回退到窗口足够的目标
+    allowBillingFallback: false        # Coding Plan → 按量 的回退默认关闭
+  rules: []
+
+enhance:
+  vision:                         # M4
+    enabled: false
+    channel: ark-api              # 网关自发调用，不走 Coding Plan
+    upstreamModel: doubao-seed-2-1-pro-260628
+    onFailure: error
+
+logging:
+  level: info
+  requestLog: metadata            # 本期只记元数据：时间、会话、模型×渠道、状态、耗时、usage、诊断
+  bodies: off
+  retentionDays: 14

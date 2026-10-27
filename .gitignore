@@ -1,0 +1,30 @@
+node_modules/
+dist/
+coverage/
+*.log
+
+# 参考仓库与抓包原始数据
+refs/
+captures/
+*.har
+*.pcap
+
+# 本地配置与密钥
+.env
+.env.*
+!.env.example
+config/*.local.yaml
+config/gateway.yaml
+secrets/
+*.pem
+*.key
+*.p12
+*.db
+*.db-*
+
+# 本地私有文档（部署细节、个人记录）
+docs/private/
+*.LOCAL.md
+*.local.md
+
+.DS_Store
