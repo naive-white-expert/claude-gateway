@@ -84,10 +84,13 @@ models:
     upstreamModel: deepseek-v4-pro
     contextWindow: 1000000
   claude-gw-dsflash:
-    displayName: DeepSeek V4 Flash（官方）
+    displayName: DeepSeek V4.1 Flash（官方）
     channel: deepseek
-    upstreamModel: deepseek-flash
-    contextWindow: 1000000
+    upstreamModel: deepseek-flash   # 官方名，当前由 DeepSeek-V4.1-Flash-1017 提供服务
+    contextWindow: 1048576          # 输入 + 输出合计；官方 /models 示例
+    maxOutputTokens: 393216
+    inputModalities: [text, image]
+    maxEffort: max                  # 支持 low / high / max，默认 high
   claude-gw-dsflash-hs:
     displayName: DeepSeek V4 Flash（火山）
     channel: ark-coding
@@ -103,6 +106,14 @@ models:
     channel: zhipu-api
     upstreamModel: glm-5.3
     contextWindow: 200000
+  claude-gw-zp53flash:
+    displayName: GLM-5.3-Flash（智谱按量）
+    channel: zhipu-api              # opus 档 GLM 走哪个渠道待定（方案 §11）
+    upstreamModel: glm-5.3-flash
+    contextWindow: 1000000          # 官方标注 1M
+    maxOutputTokens: 131072         # 官方标注 128K
+    inputModalities: [text, image]  # 官方模型页为原生多模态；经 Anthropic 兼容端点传图待 M0
+    thinking: always-on             # thinking.type 仅支持 enabled
   claude-gw-zp53-hs:
     displayName: GLM-5.3（火山）
     channel: ark-coding
@@ -118,11 +129,12 @@ models:
 # 场景与模型的对应由客户端档位决定（方案 §4.9）。网关不按场景改模型，
 # 只用这里的默认值生成桌面端 inferenceModels 的 anthropicFamilyTier / isFamilyDefault、
 # /v1/models 的 anthropic_family_tier，以及 cc 的 ANTHROPIC_DEFAULT_*_MODEL。
+# 以下是默认值（2026-10-27），使用者可以在这里改成任何已配置的对外 ID；主对话仍可在桌面端随时切换。
 clients:
   tiers:
-    opus: claude-gw-dsv4pro
-    sonnet: claude-gw-zp53-plan
-    haiku: claude-gw-dsflash      # 后台小任务（起标题、总结等）；用哪个模型待定（方案 §11）
+    sonnet: claude-gw-dsflash     # 默认主对话：DeepSeek V4.1 Flash（官方）
+    haiku: claude-gw-dsflash      # 后台小任务（起标题、总结等）：同上
+    opus: claude-gw-zp53flash     # GLM-5.3-Flash（智谱按量）
   subagentModel: null             # 生成 CLAUDE_CODE_SUBAGENT_MODEL；null 表示子 agent 跟随主会话模型
   sessionStateTtlHours: 24        # 会话线状态（切换检测、thinking 登记）
 
