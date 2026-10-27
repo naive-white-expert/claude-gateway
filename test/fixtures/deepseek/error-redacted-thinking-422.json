@@ -1,0 +1,11 @@
+{
+  "status": 422,
+  "body": {
+    "error": {
+      "message": "Failed to deserialize the JSON body into the target type: messages[1].content: unknown variant `redacted_thinking`, expected one of `text`, `image`, `document`, `thinking`, `server_tool_use`, `tool_use`, `tool_result`, `web_search_tool_result`, `tool_addition` at line 1 column 557 (request_id: 00000000-0000-0000-0000-000000000000)",
+      "type": "invalid_request_error",
+      "param": null,
+      "code": "invalid_request_error"
+    }
+  }
+}

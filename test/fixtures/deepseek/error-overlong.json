@@ -1,0 +1,11 @@
+{
+  "status": 400,
+  "body": {
+    "error": {
+      "message": "This model's maximum context length is 1048576 tokens. However, you requested 1132004 tokens (1100004 in the messages, 32000 in the completion). Please reduce the length of the messages or completion. (request_id: 00000000-0000-0000-0000-000000000000)",
+      "type": "invalid_request_error",
+      "param": null,
+      "code": "invalid_request_error"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "status": 400,
+  "body": {
+    "error": {
+      "message": "The `content[].thinking` in the thinking mode must be passed back to the API. (request_id: 00000000-0000-0000-0000-000000000000)",
+      "type": "invalid_request_error",
+      "param": null,
+      "code": "invalid_request_error"
+    }
+  }
+}

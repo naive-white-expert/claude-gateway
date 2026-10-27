@@ -1,0 +1,11 @@
+{
+  "status": 400,
+  "body": {
+    "error": {
+      "message": "The supported API model names are deepseek-flash, deepseek-v4-pro, but you passed no-such-model-xyz. (request_id: 00000000-0000-0000-0000-000000000000)",
+      "type": "invalid_request_error",
+      "param": null,
+      "code": "invalid_request_error"
+    }
+  }
+}
