@@ -71,27 +71,34 @@ channels:
     credentials:
       - { id: ark-payg, apiKeyEnv: ARK_API_KEY }
 
-models:                           # 模型 × 渠道；channels 顺序 = 默认渠道 + 备选
-  deepseek-v4-pro:
+# 对外 ID（键）必须是 Claude 形态：Claude 桌面端会移除含 deepseek/glm/kimi/doubao/seed- 等片段的模型 ID，
+# 加载配置时网关按同一规则校验（docs/桌面端接入.md §2.4）。真实模型与渠道写在 displayName。
+models:                           # 对外 ID → 模型 × 渠道；channels 顺序 = 默认渠道 + 备选
+  claude-gw-pro:
     displayName: DeepSeek V4 Pro
-    contextWindow: 1000000
+    tier: opus                    # 返回 anthropic_family_tier，并写入桌面端配置片段
+    contextWindow: 1000000        # 生成 /v1/models 的 max_input_tokens、桌面端 supports1m、cc 压缩窗口
+    maxEffort: max
     channels:
       - { channel: deepseek,   upstreamModel: deepseek-v4-pro }
       - { channel: ark-coding, upstreamModel: deepseek-v4-pro }
-  deepseek-flash:
+  claude-gw-flash:
     displayName: DeepSeek Flash
+    tier: haiku
     contextWindow: 1000000
     channels:
       - { channel: deepseek,   upstreamModel: deepseek-flash }
       - { channel: ark-coding, upstreamModel: deepseek-v4-flash }
-  glm-5.3:
+  claude-gw-zhipu:
     displayName: GLM-5.3
+    tier: sonnet
+    tierDefault: true
     contextWindow: 200000         # 智谱直连窗口待 M0 核对；方舟渠道文档为 1024k，可按渠道覆盖
     channels:
       - { channel: zhipu-coding, upstreamModel: glm-5.3 }
       - { channel: zhipu-api,    upstreamModel: glm-5.3, fallbackOnly: true }   # 套餐耗尽时的计费回退，需显式开启
       - { channel: ark-coding,   upstreamModel: glm-5.3, contextWindow: 1000000 }
-  doubao-seed-2.1-pro:
+  claude-gw-vision:
     displayName: Doubao Seed 2.1 Pro
     contextWindow: 1000000
     inputModalities: [text, image]
@@ -99,11 +106,11 @@ models:                           # 模型 × 渠道；channels 顺序 = 默认�
       - { channel: ark-coding, upstreamModel: doubao-seed-2.1-pro }
 
 router:
-  default: deepseek-v4-pro
+  default: claude-gw-pro
   scenarios:
-    auxiliary: deepseek-flash
-    subagent: glm-5.3
-    compaction: deepseek-v4-pro   # 选窗口足够大的模型
+    auxiliary: claude-gw-flash
+    subagent: claude-gw-zhipu
+    compaction: claude-gw-pro     # 选窗口足够大的模型
   stickiness: session             # 会话线 = x-claude-code-session-id + agent-id
   fallback:
     on: [429, 5xx, timeout, connect]   # 只在首字节前；只回退到窗口足够的目标
