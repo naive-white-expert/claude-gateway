@@ -34,11 +34,11 @@ function arg(argv: string[], name: string): string | undefined {
 const flag = (argv: string[], name: string): boolean => argv.includes(name);
 
 function loadCfg(argv: string[]): GatewayConfig {
-  return loadConfigFile(arg(argv, '--config') ?? process.env.CGW_CONFIG ?? DEFAULT_CONFIG_PATH, process.env);
+  return loadConfigFile(arg(argv, '--config') ?? process.env.CGW_CONFIG ?? DEFAULT_CONFIG_PATH, process.env, { skipTlsPaths: true });
 }
 
-const desktopDir = (): string => join(homedir(), 'Library', 'Application Support', 'Claude-3p', 'configLibrary');
-const backupRoot = (): string => join(homedir(), '.claude-gateway-backups');
+const desktopDir = (): string => process.env.CGW_DESKTOP_DIR ?? join(homedir(), 'Library', 'Application Support', 'Claude-3p', 'configLibrary');
+const backupRoot = (): string => process.env.CGW_BACKUP_DIR ?? join(homedir(), '.claude-gateway-backups');
 
 function backupDesktop(dir?: string): string {
   const src = desktopDir();

@@ -71,7 +71,13 @@ function expandEnv(s: string | undefined, env: NodeJS.ProcessEnv): string | unde
   });
 }
 
-export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env, opts: { requireKeys?: boolean } = {}): GatewayConfig {
+export interface LoadOptions {
+  requireKeys?: boolean;
+  /** cgw 命令不读证书：TLS 路径里的 ${VAR} 不展开 */
+  skipTlsPaths?: boolean;
+}
+
+export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env, opts: LoadOptions = {}): GatewayConfig {
   const parsed = ConfigSchema.safeParse(raw);
   if (!parsed.success) {
     const msgs = parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`);
@@ -80,7 +86,7 @@ export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env
   const cfg = parsed.data;
   const warnings: string[] = [];
 
-  if (cfg.server.tls.enabled) {
+  if (cfg.server.tls.enabled && !opts.skipTlsPaths) {
     for (const k of ['certFile', 'keyFile'] as const) if (!cfg.server.tls[k]) throw new ConfigError(`server.tls.${k} is required when tls.enabled`);
     if (cfg.server.tls.requireClientCert && !cfg.server.tls.clientCa) throw new ConfigError('server.tls.clientCa is required when requireClientCert');
     cfg.server.tls.certFile = expandEnv(cfg.server.tls.certFile, env);
@@ -150,7 +156,7 @@ export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env
   return { ...cfg, channelMap, modelMap, exposed, warnings };
 }
 
-export function loadConfigFile(path: string, env: NodeJS.ProcessEnv = process.env, opts: { requireKeys?: boolean } = {}): GatewayConfig {
+export function loadConfigFile(path: string, env: NodeJS.ProcessEnv = process.env, opts: LoadOptions = {}): GatewayConfig {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');

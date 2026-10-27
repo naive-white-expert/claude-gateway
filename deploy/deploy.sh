@@ -30,7 +30,7 @@ if [ ! -s /etc/claude-gateway/gateway.yaml ]; then
   echo "missing /etc/claude-gateway/gateway.yaml — create it (see config/gateway.example.yaml), then: systemctl restart claude-gateway" >&2
   exit 1
 fi
-CGW_CONFIG=/etc/claude-gateway/gateway.yaml CREDENTIALS_DIRECTORY=/etc/claude-gateway/tls \
+CGW_CONFIG=/etc/claude-gateway/gateway.yaml \
   runuser -u cgw -- node --disable-warning=ExperimentalWarning dist/cli/cgw.js check-config
 systemctl restart claude-gateway
 sleep 2

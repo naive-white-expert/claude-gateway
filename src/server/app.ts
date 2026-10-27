@@ -509,7 +509,7 @@ export class Gateway {
       stats: this.stats,
       bannedIps: this.guard.bannedCount(),
       concurrency: Object.fromEntries(
-        [...this.cfg.modelMap.values()].map((m) => [m.id, { displayName: m.displayName, channel: m.channel, limit: m.effectiveConcurrency, ...this.limiter.state(m.id) }]),
+        [...this.cfg.modelMap.values()].filter((m) => m.channelRef.enabled).map((m) => [m.id, { displayName: m.displayName, channel: m.channel, limit: m.effectiveConcurrency, ...this.limiter.state(m.id) }]),
       ),
     };
   }
