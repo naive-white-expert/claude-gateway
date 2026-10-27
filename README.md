@@ -64,7 +64,9 @@ scripts/         辅助脚本
 - [Claude Code Router（CCR）](https://github.com/musistudio/claude-code-router)：场景路由、key 池、额度连接器、托管搜索等思路。
 - [deepseek-harness（dsh）](https://github.com/deepseek-ai/deepseek-harness)：声明式 compat 描述国产模型差异、严格的 tool_use / thinking 校验。
 
-两者均为 MIT 许可。本仓库目前只在文档中引用它们的源码位置，不包含其代码；今后如复用代码，会保留原版权声明并注明出处。
+- [Hermes Agent（Nous Research）](https://github.com/NousResearch/hermes-agent)：第三方 Anthropic 端点的 thinking 回放策略、大图压缩与 MIME 嗅探、错误分类。
+
+三者均为 MIT 许可。本仓库目前只在文档中引用它们的源码位置，不包含其代码。今后如复用代码，会在 `THIRD_PARTY_NOTICES` 中保留原版权声明并注明出处（[方案 §8.6](docs/方案-v0.1.md#86-第三方代码与许可)）。
 
 ## 许可证
 
