@@ -181,9 +181,20 @@ clients:
   sessionStateTtlHours: 24        # 会话线状态（切换检测、thinking 登记）
 
 limits:
-  # 渠道或对外 ID 上的 concurrency 超限时的行为（方案 §4.3；排队还是立即 429 待定）
-  onConcurrencyExceeded: queue    # queue | reject
-  queueTimeoutMs: 60000           # 排队超时后返回 429，带短 retry-after（cc 会自动重试）
+  # 渠道或对外 ID 上的 concurrency 超限时（方案 §4.3、§4.12，2026-10-27 定）
+  onConcurrencyExceeded: queue    # 先排队
+  queueTimeoutMs: 60000           # 最多 60s
+  rejectStatus: 429               # 超时后返回 rate_limit_error
+  rejectRetryAfterSec: 120        # 大于 60：cc 不再静默重试，立即显示错误
+  rejectMessage: null             # 提示文案待用户确认；诊断码 cgw_concurrency_limit
+  responseHeaders: ietf-draft     # 附加 RateLimit-Policy / RateLimit 头；不伪造 anthropic-ratelimit-unified-*
+
+concurrencyHint:
+  # 把并发限制告诉模型（方案 §4.12）
+  clientMaxToolUseConcurrency: auto   # 写入生成的 settings env：CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY = 常用对外 ID 的上限 - 1
+  injectSystemPrompt: true        # 在 system 末尾追加静态说明（无 cache_control）；默认开或关待用户定
+  injectFor: [main, subagent]     # 后台小任务不注入
+  textTemplate: null              # 注入文本待用户过目；只允许引用配置中的静态值（如 {concurrency}）
 
 switchAdvice:
   # 用户切换模型后历史不兼容时，返回带建议的错误（会话专题 §4.8）
@@ -209,7 +220,8 @@ mcp:
     backends:                     # 只启用配置了 key 的后端；key 只用环境变量引用
       volcengine: { apiKeyEnv: WEB_SEARCH_API_KEY }   # 火山联网搜索专用 key（与方舟模型 key 不通用）
       bailian:    { apiKeyEnv: BAILIAN_API_KEY }      # deep 第二源；返回的是模型生成的答案，见方案 §7.1
-      tavily:     { apiKeyEnv: TAVILY_API_KEY }       # 海外；国内服务器连通性待测
+      tavily:     { apiKeyEnv: TAVILY_API_KEY, backupApiKeyEnv: TAVILY_API_KEY_BACKUP }   # 海外；主 key 当月额度用完后改用备用 key；国内连通性待测
+      tencent:    { apiKeyEnvs: [TENCENT_WSA_KEY_1, TENCENT_WSA_KEY_2] }                  # 可选；遇 401 / 429 换下一把
       zhipu:      { apiKeyEnv: ZHIPU_API_KEY }        # 可选；用按量 key，不用 Coding Plan key
     defaultIntensity: normal      # 模型可在每次调用时自选 quick / normal / deep
   fetch:
