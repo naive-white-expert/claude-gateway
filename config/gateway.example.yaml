@@ -4,10 +4,18 @@
 
 # 公网入口方式见方案 §8.5。
 server:
-  host: 127.0.0.1                 # 只监听回环；TLS 在边缘终结（本机 nginx / Caddy，或经加密链路的反代）
-  port: 3456
+  # 本机 TLS：host 127.0.0.1、tls.enabled false，由本机 nginx / Caddy 对外提供 TLS。
+  # 经反代：网关直接以 HTTPS 监听非标准端口，反代机以证书固定（可选双向 TLS）转发过来。
+  host: 0.0.0.0                   # 经反代时监听公网网卡；安全组只放行反代机 IP 到该端口
+  port: 8443
+  tls:
+    enabled: true
+    certFile: /etc/claude-gateway/tls/server.crt   # 自建小 CA 签发的长期证书，SAN 例如 gateway.internal
+    keyFile: /etc/claude-gateway/tls/server.key    # 0600
+    clientCa: /etc/claude-gateway/tls/ca.crt       # 双向 TLS（推荐）：只接受该 CA 签发的客户端证书
+    requireClientCert: true
   publicBaseUrl: https://gateway.example.com   # 替换为你的域名，用于生成 cc settings 片段
-  maxRequestBodyMB: 32
+  maxRequestBodyMB: 64            # 1M 上下文请求体可达数 MB，含图片更大；与反代的 client_max_body_size 一致
   upstreamTimeoutMs: 600000
   idleStreamTimeoutMs: 120000
   pingIntervalMs: 15000
@@ -26,8 +34,8 @@ security:
   ipAllowlist:
     enabled: false
     cidrs: []
-  trustProxyHeaders: false        # 仅当经可信反代时开启，用于取真实客户端 IP
-  trustedProxies: []              # 经反代时填反代的内网 / 隧道地址
+  trustProxyHeaders: true         # 经反代时开启，用于取真实客户端 IP
+  trustedProxies: [203.0.113.10]  # 只填反代机的公网 IP（示例为文档保留地址）
 
 channels:
   - id: deepseek

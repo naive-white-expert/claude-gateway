@@ -49,6 +49,7 @@
 ```text
 docs/            方案与调研
 config/          配置示例
+deploy/          部署示例（反代机 nginx 配置等）
 src/             模块骨架（见 src/README.md）
 test/            契约测试与脱敏 fixture
 scripts/         辅助脚本
