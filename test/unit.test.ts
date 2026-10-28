@@ -51,6 +51,21 @@ describe('SseRewriter', () => {
     const [thinking] = rw.blocksForLedger();
     expect(thinking.signature).toMatch(/^[0-9a-f]{24}$/);
   });
+  it('handles the Ark stream: thinking without signature, real usage already in message_start', () => {
+    const raw = fixture('ark-coding/stream-thinking-tool-use.sse');
+    const rw = new SseRewriter('claude-gw-dsflash-hs');
+    let out = '';
+    const bytes = Buffer.from(raw);
+    for (let i = 0; i < bytes.length; i += 31) out += rw.push(bytes.subarray(i, i + 31)).join('');
+    out += rw.flush();
+    expect(JSON.parse(out.split('\n\n')[0].split('data: ')[1]).message.model).toBe('claude-gw-dsflash-hs');
+    expect(out.split('\n\n').slice(1)).toEqual(raw.split('\n\n').slice(1));
+    expect(rw.stopReason).toBe('tool_use');
+    expect(rw.usage).toMatchObject({ input_tokens: 48, output_tokens: 51, cache_read_input_tokens: 256 });
+    const [thinking] = rw.blocksForLedger();
+    expect(thinking.type).toBe('thinking');
+    expect(thinking.signature).toBe('');
+  });
 });
 
 describe('ConcurrencyLimiter', () => {
@@ -118,6 +133,9 @@ describe('error rewrites', () => {
       const f = JSON.parse(fixture(fx));
       expect(rewriteUpstreamError(f.status, JSON.stringify(f.body), zctx)).toBeNull();
     }
+    const actx = { channel: ex.channelMap.get('ark-coding')!, switched: true, historyMessage: () => 'HISTORY' };
+    const f = JSON.parse(fixture('ark-coding/error-unsupported-model-404.json'));
+    expect(rewriteUpstreamError(f.status, JSON.stringify(f.body), actx)).toBeNull();
   });
 });
 
@@ -172,6 +190,15 @@ describe('thinking filter', () => {
     filterThinking(m as any, { model, requestedId: model.id, ledger }, diags);
     expect(m).toEqual(msgs());
     expect(diags).toEqual([]);
+  });
+  it('the measured ark-coding profile keeps every thinking block and strips no tools', () => {
+    const ex = loadConfigFile(join(import.meta.dirname, '../config/gateway.example.yaml'), {});
+    const model = ex.modelMap.get('claude-gw-dsflash-hs')!;
+    expect(model.channelRef.profile).toMatchObject({ authHeader: 'bearer', thinkingReplay: 'passthrough', redactedThinking: 'supported', betaStrip: [], toolStrip: [] });
+    expect(ex.modelMap.get('claude-gw-dsv4pro-hs')!.inputModalities).toEqual(['text']);
+    const m = msgs();
+    filterThinking(m as any, { model, requestedId: model.id, ledger }, []);
+    expect(m).toEqual(msgs());
   });
 });
 

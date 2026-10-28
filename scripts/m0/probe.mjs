@@ -30,6 +30,7 @@ const KEEP_HEADERS = /^(content-type|retry-after|x-ratelimit-.*|ratelimit.*|anth
 function redact(s) {
   return String(s)
     .replace(/sk-[A-Za-z0-9]{8,}/g, 'sk-<redacted>')
+    .replace(/ark-[0-9a-f-]{20,}/gi, 'ark-<redacted>')
     .replace(/[A-Za-z0-9]{24,}\.[A-Za-z0-9]{8,}/g, '<redacted-key>')
     .replace(/Bearer\s+\S+/gi, 'Bearer <redacted>');
 }
