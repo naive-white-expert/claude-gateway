@@ -46,6 +46,7 @@ security:
 #   timeouts              connectMs / firstByteMs（到首个内容事件）/ idleMs（流开始后两次数据的最长间隔）
 #   countTokens           upstream（转发上游原生 count_tokens；Coding Plan 渠道不会转发）/ estimate（本地估算）
 #   metadataUserId        strip（默认，cc 的 user_id 含设备与账号标识）/ passthrough
+#   toolStrip             转发前从 tools 中去掉的工具名（默认空）
 #   overlongPatterns      追加的非 Anthropic 超长错误正则（命名组 req、max），内置规则见 src/config/load.ts
 #   replayErrorPatterns   追加的“切换后历史不兼容”错误正则
 #   signatureErrorPatterns  追加的签名类错误正则（改写为 cc 能识别的措辞）
@@ -81,18 +82,19 @@ channels:
 
   - id: zhipu-coding
     protocol: anthropic_messages
-    baseUrl: https://open.bigmodel.cn/api/anthropic   # 与 zhipu-api 同一 URL，计费由 key 所属账号 / 套餐决定（待 M0）
+    baseUrl: https://open.bigmodel.cn/api/anthropic   # 与 zhipu-api 同一 URL；M0：用 Coding Plan 专用 key 调用计入套餐积分，计费由 key 决定
     billing: coding-plan
     interactiveOnly: true         # 只承载 cc 发起的交互请求，网关自发调用不走此渠道（方案 §6.3）
     apiKeyEnv: ZHIPU_CODING_API_KEY
     concurrency: 2                # 官方未公开具体数字（按套餐等级动态）；保守默认 2，可调
     profile:
       authHeader: x-api-key
-      betaStrip: []
-      thinkingReplay: strip-foreign
-      redactedThinking: unsupported
+      betaStrip: []               # M0：cc 2.1.309 的 7 个 beta 值加 context-1m 一并发送时接受
+      thinkingReplay: passthrough # M0：自己的、别家签名的、无签名的 thinking 以及工具调用轮缺 thinking 都接受
+      redactedThinking: supported # M0：redacted_thinking 返回 200
       timeouts: { connectMs: 10000, firstByteMs: 600000, idleMs: 120000 }
-      countTokens: estimate
+      countTokens: estimate       # M0：上游 count_tokens 可用，但 Coding Plan 渠道不转发（方案 §6.3）
+      toolStrip: [ToolSearch]     # M0：tools 里有名为 ToolSearch 的工具时，上游只保留这一个工具、其余静默丢弃
     quota:
       connector: zhipu-coding     # M2：只读展示 5h / 周积分
 
@@ -142,9 +144,9 @@ models:
     channel: zhipu-coding           # 2026-10-27 定：opus 档优先走智谱 Coding Plan
     upstreamModel: glm-5.3-flash
     contextWindow: 1000000          # 官方标注 1M
-    maxOutputTokens: 131072         # 官方标注 128K
-    inputModalities: [text, image]  # 官方模型页为原生多模态；经 Anthropic 兼容端点传图待 M0
-    thinking: always-on             # thinking.type 仅支持 enabled
+    maxOutputTokens: 131072         # 官方标注 128K；M0：max_tokens 超过 131072 返回 400（1210）
+    inputModalities: [text, image]  # M0：经 Anthropic 兼容端点传图（base64 PNG）能正确识别
+    thinking: always-on             # 官方：thinking.type 仅支持 enabled；M0：传 disabled 时有时仍返回 thinking
     maxEffort: max
   claude-gw-zp53flash:
     displayName: GLM-5.3-Flash（智谱按量）

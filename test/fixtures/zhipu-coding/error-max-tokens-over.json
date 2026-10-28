@@ -1,0 +1,12 @@
+{
+  "status": 400,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "invalid_request_error",
+      "code": "1210",
+      "message": "[1210][max_tokens参数非法：限制数值范围[1,131072]][000000000000000000000000000000]"
+    },
+    "request_id": "000000000000000000000000000000"
+  }
+}

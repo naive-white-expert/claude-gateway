@@ -117,6 +117,20 @@ export function prepareRequestBody(body: Json, ctx: PrepareContext): { body: Jso
     body.max_tokens = model.maxOutputTokens;
   }
 
+  if (profile.toolStrip.length && Array.isArray(body.tools)) {
+    const tools = body.tools as Block[];
+    const kept = tools.filter((t) => !profile.toolStrip.includes(String(t.name)));
+    if (kept.length !== tools.length) {
+      const names = tools.filter((t) => !kept.includes(t)).map((t) => String(t.name));
+      diags.push({ code: 'tool_stripped', action: 'strip', field: 'tools', detail: names.join(',') });
+      if (kept.length) body.tools = kept;
+      else delete body.tools;
+      const choice = body.tool_choice as Json | undefined;
+      if (choice?.type === 'tool' && names.includes(String(choice.name))) delete body.tool_choice;
+      else if (!kept.length && choice) delete body.tool_choice;
+    }
+  }
+
   const thinking = body.thinking as Json | undefined;
   if (thinking?.type === 'disabled' && model.thinking === 'always-on')
     diags.push({ code: 'thinking_cannot_disable', action: 'passthrough', field: 'thinking.type' });

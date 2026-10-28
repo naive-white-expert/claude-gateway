@@ -5,6 +5,7 @@
 // 白名单响应头、错误体与结构摘要（thinking / 正文只记长度与前 80 字符）。
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { deflateSync } from 'node:zlib';
 
 const CHANNELS = {
   deepseek: { baseUrl: 'https://api.deepseek.com/anthropic', keyEnv: 'DEEPSEEK_API_KEY', model: 'deepseek-flash', auth: 'x-api-key' },
@@ -116,6 +117,16 @@ async function call(name, { body, headers = {}, auth = ch.auth, path = '/v1/mess
   return rec;
 }
 
+function solidPng(w, h, [r, g, b]) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = (buf) => { let c = 0xffffffff; for (const x of buf) c = crcTable[(c ^ x) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array.from({ length: w }, () => [r, g, b]).flat())]);
+  const idat = deflateSync(Buffer.concat(Array.from({ length: h }, () => row)));
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', Buffer.alloc(0))]).toString('base64');
+}
+
 const M = ch.model;
 const user = (t) => ({ role: 'user', content: t });
 const TOOLS = [{ name: 'get_weather', description: 'Get weather for a city', input_schema: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] } }];
@@ -163,6 +174,16 @@ const CASES = {
     const id = 'toolu_01AbCdEfGhIjKlMnOpQrStUv';
     await call('replay_foreign_signed', { body: { model: M, max_tokens: 300, tools: TOOLS, messages: [user('Use the get_weather tool for Beijing.'), { role: 'assistant', content: [{ type: 'thinking', thinking: 'I should call the weather tool.', signature: 'EqQBCkYIBxgCKkAforeignSignatureForProbeOnly0000000000000000000000000000000000000000==' }, { type: 'tool_use', id, name: 'get_weather', input: { city: 'Beijing' } }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Sunny, 20C' }] }] } });
   },
+  async replay_deepseek_signed() {
+    // 模拟 DeepSeek → 其他渠道：历史里是 DeepSeek 形态的 thinking（signature 为 36 位 UUID）
+    const id = 'call_00_AbCdEfGhIjKlMnOpQrStUvWx';
+    await call('replay_deepseek_signed', { body: { model: M, max_tokens: 300, tools: TOOLS, messages: [user('Use the get_weather tool for Beijing.'), { role: 'assistant', content: [{ type: 'thinking', thinking: 'I should call the weather tool.', signature: '0f6c1d2e-3a4b-4c5d-8e9f-a0b1c2d3e4f5' }, { type: 'tool_use', id, name: 'get_weather', input: { city: 'Beijing' } }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Sunny, 20C' }] }] } });
+  },
+  async replay_glm_signed() {
+    // 模拟 GLM → 其他渠道：历史里是 GLM 形态的 thinking（signature 为 24 位十六进制）
+    const id = 'call_0123456789abcdef01234567';
+    await call('replay_glm_signed', { body: { model: M, max_tokens: 300, tools: TOOLS, messages: [user('Use the get_weather tool for Beijing.'), { role: 'assistant', content: [{ type: 'thinking', thinking: 'I should call the weather tool.', signature: '0123456789abcdef01234567' }, { type: 'tool_use', id, name: 'get_weather', input: { city: 'Beijing' } }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Sunny, 20C' }] }] } });
+  },
   async replay_foreign_unsigned() {
     const id = 'toolu_01AbCdEfGhIjKlMnOpQrStUv';
     await call('replay_foreign_unsigned', { body: { model: M, max_tokens: 300, tools: TOOLS, messages: [user('Use the get_weather tool for Beijing.'), { role: 'assistant', content: [{ type: 'thinking', thinking: 'I should call the weather tool.' }, { type: 'tool_use', id, name: 'get_weather', input: { city: 'Beijing' } }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'Sunny, 20C' }] }] } });
@@ -188,13 +209,21 @@ const CASES = {
   },
   async betas() {
     const list = (args.betas ?? 'context-1m-2025-08-07,fine-grained-tool-streaming-2025-05-14,interleaved-thinking-2025-05-14,claude-code-20250219,oauth-2025-04-20,prompt-caching-scope-2026-01-05,effort-2025-11-24,context-management-2025-06-27,redact-thinking-2026-02-12,advanced-tool-use-2025-11-20,tool-search-tool-2025-10-19').split(',');
-    for (const b of list) await call(`beta_${b}`, { headers: { 'anthropic-beta': b }, body: { model: M, max_tokens: 8, thinking: { type: 'disabled' }, messages: [user('Say OK')] } });
+    // --betasAllOnly：先只发一次合并请求（Coding Plan 渠道少发请求），被拒再逐个跑
+    if (args.betasAllOnly !== 'true') for (const b of list) await call(`beta_${b}`, { headers: { 'anthropic-beta': b }, body: { model: M, max_tokens: 8, thinking: { type: 'disabled' }, messages: [user('Say OK')] } });
     await call('beta_all', { headers: { 'anthropic-beta': list.join(',') }, body: { model: M, max_tokens: 8, thinking: { type: 'disabled' }, messages: [user('Say OK')] } });
   },
   async image_block() {
     // 1x1 PNG
     const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
     await call('image_block', { body: { model: M, max_tokens: 32, thinking: { type: 'disabled' }, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }, { type: 'text', text: 'What color is this pixel? One word.' }] }] } });
+  },
+  async image_color() {
+    // 64x64 纯红 PNG：答对颜色且 input_tokens 明显大于纯文本，才算图片真的被处理（V4 Pro 静默丢图时两者都不满足）
+    const png = solidPng(64, 64, (args.imageRgb ?? '220,20,20').split(',').map(Number));
+    const q = 'What color is this image? Answer with one word.';
+    await call('image_color', { body: { model: M, max_tokens: Number(args.imageMaxTokens ?? 32), thinking: { type: 'disabled' }, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }, { type: 'text', text: q }] }] } });
+    await call('image_color_text_only', { body: { model: M, max_tokens: 8, thinking: { type: 'disabled' }, messages: [user(q)] } });
   },
   async overlong() {
     const n = Number(args.overlongWords ?? 1100000);

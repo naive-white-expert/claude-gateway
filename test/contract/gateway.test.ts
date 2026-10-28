@@ -132,6 +132,33 @@ describe('/v1/messages passthrough', () => {
     expect(call.body.max_tokens).toBe(131072);
   });
 
+  it('relays the GLM stream byte-for-byte and logs usage from message_delta', async () => {
+    const GLM_SSE = fixture('zhipu-coding/stream-thinking-tool-use.sse');
+    const { h } = await setup((_c, _r, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' });
+      res.end(GLM_SSE);
+    });
+    const text = await (await post(h, { model: 'claude-gw-zp53flash-plan', max_tokens: 32000, stream: true, messages: [{ role: 'user', content: 'x' }] }, SESSION)).text();
+    const events = text.split('\n\n');
+    expect(JSON.parse(events[0].split('data: ')[1]).message.model).toBe('claude-gw-zp53flash-plan');
+    expect(events.slice(1)).toEqual(GLM_SSE.split('\n\n').slice(1));
+    const log = h.db.prepare('SELECT * FROM request_log').get() as any;
+    expect(log).toMatchObject({ model: 'claude-gw-zp53flash-plan', channel: 'plan', status: 200, input_tokens: 169, output_tokens: 29 });
+  });
+
+  it('removes toolStrip tools (and a tool_choice naming them) before forwarding', async () => {
+    const { up, h } = await setup(sseHandler, (raw) => (raw.channels[1].profile.toolStrip = ['ToolSearch']));
+    const tool = (name: string) => ({ name, description: name, input_schema: { type: 'object', properties: {} } });
+    const body = { model: 'claude-gw-zp53flash-plan', max_tokens: 100, stream: true, tools: [tool('Bash'), tool('ToolSearch'), tool('Read')], messages: [{ role: 'user', content: 'x' }] };
+    await (await post(h, { ...body, tool_choice: { type: 'tool', name: 'ToolSearch' } }, SESSION)).text();
+    expect(up.calls[0].body.tools.map((t: any) => t.name)).toEqual(['Bash', 'Read']);
+    expect(up.calls[0].body.tool_choice).toBeUndefined();
+    await (await post(h, { ...body, model: 'claude-gw-dsflash' }, SESSION)).text();
+    expect(up.calls[1].body.tools.map((t: any) => t.name)).toEqual(['Bash', 'ToolSearch', 'Read']);
+    const log = h.db.prepare("SELECT diags FROM request_log WHERE model = 'claude-gw-zp53flash-plan'").get() as any;
+    expect(log.diags).toContain('tool_stripped');
+  });
+
   it('returns not_found_error for unknown models', async () => {
     const { up, h } = await setup(sseHandler);
     const r = await post(h, { model: 'claude-haiku-4-5', max_tokens: 10, messages: [] });

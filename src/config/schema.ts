@@ -14,6 +14,8 @@ export const ProfileSchema = z
     timeouts: z.object({ connectMs: ms, firstByteMs: ms, idleMs: ms }).strict(),
     countTokens: z.enum(['upstream', 'estimate']).default('estimate'),
     metadataUserId: z.enum(['strip', 'passthrough']).default('strip'),
+    // 转发前从 tools 中去掉的工具名（上游对某些工具名有特殊处理时用）
+    toolStrip: z.array(z.string()).default([]),
     // 已知的非 Anthropic 超长错误：正则需带命名组 req（请求 token 数）与 max（上限）
     overlongPatterns: PatternList,
     // 用户切换模型后才会出现的“回放类”400（会话专题 §4.8）

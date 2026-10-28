@@ -7,7 +7,9 @@ import { ThinkingLedger } from '../src/router/session.js';
 import { openDb } from '../src/store/db.js';
 import { redact } from '../src/observability/log.js';
 import { KeyStore } from '../src/auth/keys.js';
+import { loadConfigFile } from '../src/config/load.js';
 import { fixture, testConfig } from './helpers.js';
+import { join } from 'node:path';
 
 describe('SseRewriter', () => {
   it('rewrites only message_start.model and keeps every other byte', () => {
@@ -30,6 +32,24 @@ describe('SseRewriter', () => {
     expect(thinking.type).toBe('thinking');
     expect(thinking.signature).toMatch(/^[0-9a-f-]{36}$/);
     expect(thinking.thinking!.length).toBeGreaterThan(10);
+  });
+  it('handles the GLM stream: spaced JSON, zero usage in message_start, signature via signature_delta', () => {
+    const raw = fixture('zhipu-coding/stream-thinking-tool-use.sse');
+    const rw = new SseRewriter('claude-gw-zp53flash-plan');
+    const bytes = Buffer.from(raw);
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 29) out += rw.push(bytes.subarray(i, i + 29)).join('');
+    out += rw.flush();
+    const before = raw.split('\n\n');
+    const after = out.split('\n\n');
+    expect(after.length).toBe(before.length);
+    expect(JSON.parse(after[0].split('data: ')[1]).message.model).toBe('claude-gw-zp53flash-plan');
+    expect(after.slice(1)).toEqual(before.slice(1));
+    expect(rw.stopReason).toBe('tool_use');
+    expect(rw.usage.input_tokens).toBe(169);
+    expect(rw.usage.cache_read_input_tokens).toBe(0);
+    const [thinking] = rw.blocksForLedger();
+    expect(thinking.signature).toMatch(/^[0-9a-f]{24}$/);
   });
 });
 
@@ -91,6 +111,14 @@ describe('error rewrites', () => {
     expect(rewriteUpstreamError(f.status, JSON.stringify(f.body), ctx(true))).toBeNull();
     expect(rewriteUpstreamError(500, '{}', ctx(true))).toBeNull();
   });
+  it('passes GLM errors through unchanged (no overlong / replay / signature rule matches)', () => {
+    const ex = loadConfigFile(join(import.meta.dirname, '../config/gateway.example.yaml'), {});
+    const zctx = { channel: ex.channelMap.get('zhipu-coding')!, switched: true, historyMessage: () => 'HISTORY' };
+    for (const fx of ['zhipu-coding/error-unknown-model.json', 'zhipu-coding/error-max-tokens-over.json']) {
+      const f = JSON.parse(fixture(fx));
+      expect(rewriteUpstreamError(f.status, JSON.stringify(f.body), zctx)).toBeNull();
+    }
+  });
 });
 
 describe('tool pairing', () => {
@@ -134,6 +162,16 @@ describe('thinking filter', () => {
     expect(m[1].content[0]).toHaveProperty('cache_control');
     expect(m[2].content).toHaveLength(1);
     expect((m[3].content as any[]).map((b) => b.type)).toEqual(['thinking', 'text']);
+  });
+  it('the measured zhipu-coding profile keeps every thinking block, redacted_thinking included', () => {
+    const ex = loadConfigFile(join(import.meta.dirname, '../config/gateway.example.yaml'), {});
+    const model = ex.modelMap.get('claude-gw-zp53flash-plan')!;
+    expect(model.channelRef.profile).toMatchObject({ thinkingReplay: 'passthrough', redactedThinking: 'supported', betaStrip: [], toolStrip: ['ToolSearch'] });
+    const m = msgs();
+    const diags: any[] = [];
+    filterThinking(m as any, { model, requestedId: model.id, ledger }, diags);
+    expect(m).toEqual(msgs());
+    expect(diags).toEqual([]);
   });
 });
 
