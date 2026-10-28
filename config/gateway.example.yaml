@@ -216,6 +216,9 @@ concurrencyHint:
   injectFor: [main, subagent]     # 后台小任务不注入
   # textTemplate 默认即用户确认的原文（src/config/texts.ts）
 
+# 余额或额度耗尽（错误类别 quota_exhausted）时的报错，诊断码 cgw_quota_exhausted
+# messageTemplate 默认即 2026-10-28 用户确认的原文（src/config/texts.ts），{上游原文} 为上游 error.message
+quotaAdvice: {}
 switchAdvice:
   mode: reactive                  # 上游返回已登记的回放类 400 后给建议（会话专题 §4.8）
   # messageTemplate 默认即用户确认的原文（src/config/texts.ts）

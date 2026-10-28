@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { classify, compileRule, ErrorRuleSchema, loadRuleSets, parseUpstreamError, type CompiledRule } from '../src/config/errorRules.js';
 import { resolveConfig, type ResolvedChannel } from '../src/config/load.js';
 import { decideUpstreamError } from '../src/protocol/anthropic/errors.js';
+import { fill, QUOTA_EXHAUSTED_MESSAGE } from '../src/config/texts.js';
 import { fixture, testConfig } from './helpers.js';
 
 const SETS = loadRuleSets();
@@ -126,7 +127,7 @@ describe('responses by class', () => {
   const zp = cfg.channelMap.get('plan')!;
   const ctx = (channel: ResolvedChannel, switched = false) => ({ channel, switched, historyMessage: () => 'HISTORY' });
 
-  it('quota exhausted: same status and original message, billing_error type, x-should-retry false', () => {
+  it('quota exhausted: same status, original message kept when no template is given, billing_error type, x-should-retry false', () => {
     const f = fx('zhipu-api/error-1113-insufficient-balance.json');
     const d = decideUpstreamError(f.status, f.body, {}, ctx(zp));
     expect(d.errorClass).toBe('quota_exhausted');
@@ -138,6 +139,16 @@ describe('responses by class', () => {
     expect(j.error.message).toBe(orig.error.message);
     expect(j.error.code).toBe('1113');
     expect(j.request_id).toBe(orig.request_id);
+  });
+
+  it('quota exhausted with the confirmed template wraps the upstream message word for word', () => {
+    const f = fx('zhipu-api/error-1113-insufficient-balance.json');
+    const orig = JSON.parse(f.body).error.message;
+    const d = decideUpstreamError(f.status, f.body, {}, { ...ctx(zp), quotaMessage: (m) => fill(QUOTA_EXHAUSTED_MESSAGE, { 模型显示名: 'GLM-5.3-Flash（智谱按量）', 上游原文: m }) });
+    expect(JSON.parse(d.body).error.message).toBe(`「GLM-5.3-Flash（智谱按量）」渠道返回余额或额度不足：${orig}。可以处理后重发，或在模型选择器中切换到其他模型继续。（诊断码 cgw_quota_exhausted）`);
+    expect(d.headers).toEqual({ 'x-should-retry': 'false' });
+    expect(d.status).toBe(429);
+    expect(d.diag.code).toBe('cgw_quota_exhausted');
   });
 
   it('quota exhausted with an envelope lacking type:error gets the Anthropic envelope', () => {

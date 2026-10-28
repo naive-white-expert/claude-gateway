@@ -1,4 +1,4 @@
-// 面向用户的三段文案，均为 2026-10-27 用户确认的原文（方案 §4.12、会话专题 §4.8），不得改写。
+// 面向用户的文案，均为用户确认的原文（方案 §4.12、§5.4，会话专题 §4.8），不得改写。
 // 配置中可以覆盖模板，但默认值必须与文档原文一致。
 
 export const CONCURRENCY_LIMIT_MESSAGE =
@@ -9,6 +9,10 @@ export const HISTORY_INCOMPATIBLE_MESSAGE =
 
 export const CONCURRENCY_HINT_TEXT =
   '[claude-gateway] 你当前使用的模型渠道同时最多处理 {N} 个请求（主对话与所有子 agent 合计）。并行启动子 agent 或批量并行调用工具时，请让同时运行的子 agent 不超过 {N-1} 个；任务较多时分批进行，等前一批完成后再启动下一批。超出上限的请求会排队，排队超过 60 秒会失败。';
+
+// 2026-10-28 用户确认：分类为余额或额度耗尽（quota_exhausted）时的报错；{上游原文} 为上游 error.message 原样
+export const QUOTA_EXHAUSTED_MESSAGE =
+  '「{模型显示名}」渠道返回余额或额度不足：{上游原文}。可以处理后重发，或在模型选择器中切换到其他模型继续。（诊断码 cgw_quota_exhausted）';
 
 export function fill(template: string, vars: Record<string, string | number>): string {
   return template.replace(/\{([^{}]+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m));

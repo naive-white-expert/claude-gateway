@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { ErrorRuleSchema } from './errorRules.js';
-import { CONCURRENCY_HINT_TEXT, CONCURRENCY_LIMIT_MESSAGE, HISTORY_INCOMPATIBLE_MESSAGE } from './texts.js';
+import { CONCURRENCY_HINT_TEXT, CONCURRENCY_LIMIT_MESSAGE, HISTORY_INCOMPATIBLE_MESSAGE, QUOTA_EXHAUSTED_MESSAGE } from './texts.js';
 
 const ms = z.number().int().nonnegative();
 
@@ -129,6 +129,13 @@ export const ConfigSchema = z
         injectSystemPrompt: z.union([z.literal('auto'), z.literal(false)]).default('auto'),
         injectFor: z.array(z.string()).default(['main', 'subagent']),
         textTemplate: z.string().default(CONCURRENCY_HINT_TEXT),
+      })
+      .strict()
+      .default({}),
+    quotaAdvice: z
+      .object({
+        // 余额或额度耗尽时的报错模板（2026-10-28 用户确认原文）；{模型显示名}、{上游原文} 由网关填入
+        messageTemplate: z.string().default(QUOTA_EXHAUSTED_MESSAGE),
       })
       .strict()
       .default({}),

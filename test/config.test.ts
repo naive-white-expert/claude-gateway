@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { checkDesktopModelId } from '../src/config/desktopModelId.js';
 import { ConfigError, loadConfigFile, resolveConfig } from '../src/config/load.js';
-import { CONCURRENCY_HINT_TEXT, CONCURRENCY_LIMIT_MESSAGE, HISTORY_INCOMPATIBLE_MESSAGE } from '../src/config/texts.js';
+import { CONCURRENCY_HINT_TEXT, CONCURRENCY_LIMIT_MESSAGE, HISTORY_INCOMPATIBLE_MESSAGE, QUOTA_EXHAUSTED_MESSAGE } from '../src/config/texts.js';
 import { ccSettings, desktopInferenceConfig } from '../src/clients/generate.js';
 import { testConfig } from './helpers.js';
 
@@ -26,6 +26,8 @@ describe('confirmed texts', () => {
     expect(plan).toContain(CONCURRENCY_LIMIT_MESSAGE);
     expect(plan).toContain(CONCURRENCY_HINT_TEXT);
     expect(session).toContain(HISTORY_INCOMPATIBLE_MESSAGE);
+    expect(plan).toContain(QUOTA_EXHAUSTED_MESSAGE);
+    expect(QUOTA_EXHAUSTED_MESSAGE).toBe('「{模型显示名}」渠道返回余额或额度不足：{上游原文}。可以处理后重发，或在模型选择器中切换到其他模型继续。（诊断码 cgw_quota_exhausted）');
   });
 });
 

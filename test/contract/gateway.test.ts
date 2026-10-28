@@ -1,6 +1,6 @@
 import net from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CONCURRENCY_LIMIT_MESSAGE, HISTORY_INCOMPATIBLE_MESSAGE, fill } from '../../src/config/texts.js';
+import { CONCURRENCY_LIMIT_MESSAGE, HISTORY_INCOMPATIBLE_MESSAGE, QUOTA_EXHAUSTED_MESSAGE, fill } from '../../src/config/texts.js';
 import { fixture, mockUpstream, sleep, startGateway, testConfig, type Harness } from '../helpers.js';
 
 const SSE = fixture('deepseek/stream-thinking-tool-use.sse');
@@ -256,7 +256,11 @@ describe('error classification end to end', () => {
     expect(a.headers.get('x-should-retry')).toBe('false');
     expect(a.headers.get('retry-after')).toBeNull();
     const ja = await a.json();
-    expect(ja.error).toEqual({ ...f.body.error, type: 'billing_error' });
+    expect(ja.error).toEqual({
+      ...f.body.error,
+      type: 'billing_error',
+      message: fill(QUOTA_EXHAUSTED_MESSAGE, { 模型显示名: 'GLM-5.3-Flash（智谱 Coding Plan）', 上游原文: f.body.error.message }),
+    });
 
     up.setHandler(respond(429, zhipuErr('1302', '您的账户已达到速率限制，请您控制请求频率')));
     const b = await post(h, req);

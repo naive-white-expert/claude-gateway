@@ -5,7 +5,8 @@ import type { Diagnostic } from '../../observability/diagnostics.js';
 // 上游错误的分类与响应（方案 §1.2、§5.4）。先按渠道规则用「状态码 + 错误码 / type + 原文」判定类别，
 // 再按类别决定给客户端的响应。没有命中规则的错误原样透传；命中后也只做下表登记的改动：
 //
-//   quota_exhausted                      状态码与原文不变；error.type 设为 billing_error；加 x-should-retry: false
+//   quota_exhausted                      状态码不变；error.message 套用已确认文案（内含上游原文）；error.type 设为 billing_error；
+//                                        加 x-should-retry: false
 //   auth_failed / model_unavailable /
 //   invalid_request                      状态码与错误体不变；加 x-should-retry: false
 //   rate_limited / overloaded            状态码与错误体不变；上游没给 retry-after 时按规则补上
@@ -40,6 +41,8 @@ export interface ErrorContext {
   switched: boolean;
   /** 已填好变量的“历史不兼容”文案 */
   historyMessage: () => string;
+  /** 余额或额度耗尽的文案，参数为上游 error.message 原文 */
+  quotaMessage?: (upstreamMessage: string) => string;
 }
 
 export interface ErrorDecision {
@@ -57,12 +60,13 @@ export interface ErrorDecision {
 
 const NO_RETRY_CLASSES: ReadonlySet<ErrorClass> = new Set(['quota_exhausted', 'auth_failed', 'model_unavailable', 'invalid_request']);
 
-function setErrorType(text: string, type: string): string | null {
+function setErrorFields(text: string, type: string, message?: string): string | null {
   try {
     const j = JSON.parse(text) as Record<string, any>;
     if (!j || typeof j !== 'object') return null;
     if (j.error && typeof j.error === 'object') {
       j.error.type = type;
+      if (message !== undefined) j.error.message = message;
       if (j.type === undefined) return JSON.stringify({ type: 'error', ...j });
       return JSON.stringify(j);
     }
@@ -111,13 +115,14 @@ export function decideUpstreamError(status: number, text: string, upstreamHeader
       if (ccRecognizesSignature(msg)) return decision;
       return rewrite('signature_error_rewritten', 400, errorBody('invalid_request_error', 'messages.0.content.0: Invalid `signature` in `thinking` block'));
     case 'quota_exhausted': {
-      const body = setErrorType(text, 'billing_error');
+      const message = err.message !== undefined && ctx.quotaMessage ? ctx.quotaMessage(err.message) : undefined;
+      const body = setErrorFields(text, 'billing_error', message);
       return {
         ...decision,
         body: body ?? text,
         bodyRewritten: body !== null,
         headers: { 'x-should-retry': 'false' },
-        diag: { code: 'quota_exhausted_no_retry', action: 'rewrite', field: 'error.type,x-should-retry', detail },
+        diag: { code: 'cgw_quota_exhausted', action: 'rewrite', field: message ? 'error.message,error.type,x-should-retry' : 'error.type,x-should-retry', detail },
       };
     }
     case 'rate_limited':

@@ -396,6 +396,7 @@ export class Gateway {
           channel: ch,
           switched: obs.switched,
           historyMessage: () => fill(this.cfg.switchAdvice.messageTemplate, { 原模型: displayOf(obs.prevModel), 新模型: model.displayName }),
+          quotaMessage: (upstream) => fill(this.cfg.quotaAdvice.messageTemplate, { 模型显示名: ex.model.displayName, 上游原文: upstream }),
         });
         diags.push(d.diag);
         this.stats.errorClasses[d.errorClass] = (this.stats.errorClasses[d.errorClass] ?? 0) + 1;
