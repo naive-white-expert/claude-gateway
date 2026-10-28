@@ -196,7 +196,7 @@ describe('error rewrites end to end', () => {
     expect(r.status).toBe(400);
     expect((await r.json()).error.message).toBe('prompt is too long: 1132004 tokens > 1048576 maximum');
     const log = h.db.prepare('SELECT diags, error_type FROM request_log').get() as any;
-    expect(log.error_type).toBe('overlong');
+    expect(log.error_type).toBe('context_overflow');
     expect(log.diags).toContain('overlong_error_rewritten');
   });
 
@@ -237,6 +237,55 @@ describe('error rewrites end to end', () => {
     const r = await post(h, { model: 'claude-gw-dsflash', max_tokens: 10, messages: [{ role: 'user', content: 'x' }] });
     expect(r.status).toBe(401);
     expect(await r.json()).toEqual(f.body);
+  });
+});
+
+describe('error classification end to end', () => {
+  const zhipuErr = (code: string, message: string) => ({ type: 'error', error: { type: 'rate_limit_error', code, message: `[${code}][${message}][000000000000000000000000000000]` }, request_id: '000000000000000000000000000000' });
+  const respond = (status: number, body: unknown, headers: Record<string, string> = {}) => (_c: any, _r: any, res: any) => {
+    res.writeHead(status, { 'content-type': 'application/json', ...headers });
+    res.end(typeof body === 'string' ? body : JSON.stringify(body));
+  };
+  const req = { model: 'claude-gw-zp53flash-plan', max_tokens: 10, stream: true, messages: [{ role: 'user', content: 'x' }] };
+
+  it('429 + 1113 (balance) is marked non-retryable while 429 + 1302 (rate limit) stays retryable', async () => {
+    const f = JSON.parse(fixture('zhipu-api/error-1113-insufficient-balance.json'));
+    const { up, h } = await setup(respond(f.status, f.body));
+    const a = await post(h, req);
+    expect(a.status).toBe(429);
+    expect(a.headers.get('x-should-retry')).toBe('false');
+    expect(a.headers.get('retry-after')).toBeNull();
+    const ja = await a.json();
+    expect(ja.error).toEqual({ ...f.body.error, type: 'billing_error' });
+
+    up.setHandler(respond(429, zhipuErr('1302', '您的账户已达到速率限制，请您控制请求频率')));
+    const b = await post(h, req);
+    expect(b.status).toBe(429);
+    expect(b.headers.get('x-should-retry')).toBeNull();
+    expect(b.headers.get('retry-after')).toBe('5');
+    expect((await b.json()).error.type).toBe('rate_limit_error');
+
+    const rows = h.db.prepare('SELECT status, error_class, diags FROM request_log ORDER BY rowid').all() as any[];
+    expect(rows.map((r) => [r.status, r.error_class])).toEqual([
+      [429, 'quota_exhausted'],
+      [429, 'rate_limited'],
+    ]);
+    expect(rows[0].diags).toContain('rule=zhipu/zhipu-1113-insufficient-balance');
+    expect(rows[0].diags).not.toContain('余额');
+    expect(h.gw.snapshot().stats).toMatchObject({ errorClasses: { quota_exhausted: 1, rate_limited: 1 } });
+  });
+
+  it('passes unmatched upstream errors through untouched, headers included', async () => {
+    const raw = '{"error":{"code":"9999","message":"brand new error"}}';
+    const { h } = await setup(respond(429, raw, { 'retry-after': '7', 'x-request-id': 'up-1' }));
+    const r = await post(h, req);
+    expect(r.status).toBe(429);
+    expect(await r.text()).toBe(raw);
+    expect(r.headers.get('retry-after')).toBe('7');
+    expect(r.headers.get('x-request-id')).toBe('up-1');
+    expect(r.headers.get('x-should-retry')).toBeNull();
+    const row = h.db.prepare('SELECT error_class FROM request_log').get() as any;
+    expect(row.error_class).toBe('unknown');
   });
 });
 

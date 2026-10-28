@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ConcurrencyLimiter, QueueAbortedError, QueueTimeoutError } from '../src/limits/concurrency.js';
 import { SseRewriter } from '../src/protocol/anthropic/sse.js';
-import { rewriteUpstreamError } from '../src/protocol/anthropic/errors.js';
 import { filterThinking, validateToolPairing, RequestValidationError } from '../src/protocol/anthropic/request.js';
 import { ThinkingLedger } from '../src/router/session.js';
 import { openDb } from '../src/store/db.js';
@@ -97,45 +96,6 @@ describe('ConcurrencyLimiter', () => {
     const rs = await Promise.all([1, 2, 3].map(() => l.acquire('x', null, 10)));
     expect(l.state('x').inFlight).toBe(3);
     rs.forEach((r) => r());
-  });
-});
-
-describe('error rewrites', () => {
-  const cfg = testConfig('http://127.0.0.1:9');
-  const ch = cfg.channelMap.get('deepseek')!;
-  const ctx = (switched: boolean) => ({ channel: ch, switched, historyMessage: () => 'HISTORY' });
-  it('rewrites the DeepSeek overlong wording to the cc-recognized form', () => {
-    const f = JSON.parse(fixture('deepseek/error-overlong.json'));
-    const r = rewriteUpstreamError(f.status, JSON.stringify(f.body), ctx(false));
-    expect(r?.kind).toBe('overlong');
-    expect(JSON.parse(r!.body)).toEqual({ type: 'error', error: { type: 'invalid_request_error', message: 'prompt is too long: 1132004 tokens > 1048576 maximum' } });
-  });
-  it('passes through wording cc already recognizes', () => {
-    const body = JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'prompt is too long: 300000 tokens > 200000 maximum' } });
-    expect(rewriteUpstreamError(400, body, ctx(false))).toBeNull();
-  });
-  it('turns the must-be-passed-back 400 into the history advice only after a switch', () => {
-    const f = JSON.parse(fixture('deepseek/error-thinking-must-be-passed-back.json'));
-    expect(rewriteUpstreamError(f.status, JSON.stringify(f.body), ctx(false))).toBeNull();
-    const r = rewriteUpstreamError(f.status, JSON.stringify(f.body), ctx(true));
-    expect(r?.kind).toBe('history_incompatible');
-    expect(JSON.parse(r!.body).error.message).toBe('HISTORY');
-  });
-  it('leaves other errors alone', () => {
-    const f = JSON.parse(fixture('deepseek/error-unknown-model.json'));
-    expect(rewriteUpstreamError(f.status, JSON.stringify(f.body), ctx(true))).toBeNull();
-    expect(rewriteUpstreamError(500, '{}', ctx(true))).toBeNull();
-  });
-  it('passes GLM errors through unchanged (no overlong / replay / signature rule matches)', () => {
-    const ex = loadConfigFile(join(import.meta.dirname, '../config/gateway.example.yaml'), {});
-    const zctx = { channel: ex.channelMap.get('zhipu-coding')!, switched: true, historyMessage: () => 'HISTORY' };
-    for (const fx of ['zhipu-coding/error-unknown-model.json', 'zhipu-coding/error-max-tokens-over.json', 'zhipu-api/error-1113-insufficient-balance.json', 'zhipu-api/error-1210-thinking-disabled.json']) {
-      const f = JSON.parse(fixture(fx));
-      expect(rewriteUpstreamError(f.status, JSON.stringify(f.body), zctx)).toBeNull();
-    }
-    const actx = { channel: ex.channelMap.get('ark-coding')!, switched: true, historyMessage: () => 'HISTORY' };
-    const f = JSON.parse(fixture('ark-coding/error-unsupported-model-404.json'));
-    expect(rewriteUpstreamError(f.status, JSON.stringify(f.body), actx)).toBeNull();
   });
 });
 

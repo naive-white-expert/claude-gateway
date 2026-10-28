@@ -10,7 +10,7 @@ import { ConcurrencyLimiter, QueueAbortedError, QueueTimeoutError, type Release 
 import type { Diagnostic } from '../observability/diagnostics.js';
 import type { Logger } from '../observability/log.js';
 import type { RequestLog, RequestLogEntry } from '../observability/requestLog.js';
-import { errorBody, overlongMessage, rewriteUpstreamError } from '../protocol/anthropic/errors.js';
+import { decideUpstreamError, errorBody, overlongMessage } from '../protocol/anthropic/errors.js';
 import { prepareRequestBody, RequestValidationError } from '../protocol/anthropic/request.js';
 import { PING_EVENT, SseRewriter, sseErrorEvent, type Usage } from '../protocol/anthropic/sse.js';
 import { estimateInputTokens, lowerBoundTokens, TokenCalibrator } from '../protocol/anthropic/tokens.js';
@@ -41,7 +41,7 @@ export class Gateway {
   readonly pool = new UpstreamPool();
   readonly calibrator = new TokenCalibrator();
   readonly startedAt = Date.now();
-  stats = { requests: 0, authFailures: 0, errors: 0 };
+  stats: { requests: number; authFailures: number; errors: number; errorClasses: Record<string, number> } = { requests: 0, authFailures: 0, errors: 0, errorClasses: {} };
 
   constructor(cfg: GatewayConfig, private deps: GatewayDeps) {
     this.cfg = cfg;
@@ -392,20 +392,21 @@ export class Gateway {
       if (up.statusCode >= 400) {
         gotFirstByte = true;
         const text = await up.body.text();
-        const rewrite = rewriteUpstreamError(up.statusCode, text, {
+        const d = decideUpstreamError(up.statusCode, text, upHeaders, {
           channel: ch,
           switched: obs.switched,
           historyMessage: () => fill(this.cfg.switchAdvice.messageTemplate, { 原模型: displayOf(obs.prevModel), 新模型: model.displayName }),
         });
-        if (rewrite) {
-          diags.push(rewrite.diag);
-          this.sendJson(res, rewrite.status, rewrite.body, { ...pick(upHeaders, ['retry-after', 'x-ds-trace-id', 'request-id', 'x-request-id']), 'x-cgw-request-id': reqId });
-          return finish(rewrite.status, { errorType: rewrite.kind, ttfbMs: now() - sentAt });
-        }
-        if (up.statusCode === 401 || up.statusCode === 403) this.deps.logger.warn('upstream_auth_failed', { reqId, channel: ch.id, status: up.statusCode });
-        res.writeHead(up.statusCode, { ...upHeaders, 'content-type': ct || 'application/json', 'x-cgw-request-id': reqId });
-        res.end(text);
-        return finish(up.statusCode, { errorType: 'upstream_error', ttfbMs: now() - sentAt });
+        diags.push(d.diag);
+        this.stats.errorClasses[d.errorClass] = (this.stats.errorClasses[d.errorClass] ?? 0) + 1;
+        this.deps.logger.info('upstream_error', { reqId, channel: ch.id, status: up.statusCode, errorClass: d.errorClass, rule: d.ruleId, sentStatus: d.status, bodyRewritten: d.bodyRewritten, addedHeaders: Object.keys(d.headers) });
+        if (d.errorClass === 'auth_failed' || up.statusCode === 401 || up.statusCode === 403) this.deps.logger.warn('upstream_auth_failed', { reqId, channel: ch.id, status: up.statusCode });
+        const base = d.bodyRewritten
+          ? { ...pick(upHeaders, ['retry-after', 'x-ds-trace-id', 'request-id', 'x-request-id']), 'content-type': 'application/json' }
+          : { ...upHeaders, 'content-type': ct || 'application/json' };
+        res.writeHead(d.status, { ...base, ...d.headers, 'content-length': String(Buffer.byteLength(d.body)), 'x-cgw-request-id': reqId });
+        res.end(d.body);
+        return finish(d.status, { errorType: d.errorClass, errorClass: d.errorClass, ttfbMs: now() - sentAt });
       }
 
       if (ct.includes('text/event-stream')) {

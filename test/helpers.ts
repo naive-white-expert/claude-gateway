@@ -66,7 +66,7 @@ export function testConfig(upstreamUrl: string, overrides: (raw: any) => void = 
         billing: 'payg',
         apiKeyEnv: 'TEST_DS_KEY',
         concurrency: null,
-        profile: { authHeader: 'x-api-key', betaStrip: [], thinkingReplay: 'passthrough', redactedThinking: 'unsupported', timeouts, countTokens: 'upstream' },
+        profile: { authHeader: 'x-api-key', betaStrip: [], thinkingReplay: 'passthrough', redactedThinking: 'unsupported', timeouts, countTokens: 'upstream', errorRuleSets: ['deepseek'] },
       },
       {
         id: 'plan',
@@ -76,7 +76,7 @@ export function testConfig(upstreamUrl: string, overrides: (raw: any) => void = 
         interactiveOnly: true,
         apiKeyEnv: 'TEST_PLAN_KEY',
         concurrency: 2,
-        profile: { authHeader: 'bearer', betaStrip: ['context-1m-2025-08-07'], thinkingReplay: 'strip-foreign', redactedThinking: 'unsupported', timeouts, countTokens: 'upstream' },
+        profile: { authHeader: 'bearer', betaStrip: ['context-1m-2025-08-07'], thinkingReplay: 'strip-foreign', redactedThinking: 'unsupported', timeouts, countTokens: 'upstream', errorRuleSets: ['zhipu'] },
       },
     ],
     models: {

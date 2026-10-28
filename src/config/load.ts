@@ -1,25 +1,16 @@
 import { readFileSync } from 'node:fs';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { ConfigSchema, type ChannelConfig, type ModelConfig, type RawConfig } from './schema.js';
 import { checkDesktopModelId } from './desktopModelId.js';
-
-// 所有渠道共用的内置识别规则（M0 实测原文，见 docs/M0-渠道行为.md）；渠道 profile 中的规则在此基础上追加。
-export const BUILTIN_OVERLONG = [
-  // DeepSeek 官方 /anthropic：This model's maximum context length is 1048576 tokens. However, you requested 1132004 tokens (...)
-  String.raw`maximum context length is (?<max>\d+) tokens\. However, you requested (?<req>\d+) tokens`,
-];
-export const BUILTIN_REPLAY = [
-  // DeepSeek 官方 /anthropic：thinking 模式下历史工具调用轮缺少 thinking
-  String.raw`content\[\]\.thinking.{0,3} in the thinking mode must be passed back`,
-];
+import { compileRule, ErrorRuleError, loadRuleSets, type CompiledRule, type RuleSets } from './errorRules.js';
 
 export type TierName = 'sonnet' | 'haiku' | 'opus';
 export const TIER_ORDER: TierName[] = ['sonnet', 'opus', 'haiku'];
 
 export interface ResolvedChannel extends ChannelConfig {
-  overlong: RegExp[];
-  replay: RegExp[];
-  signature: RegExp[];
+  /** 按匹配顺序排好的错误分类规则：profile.errorRules → errorRuleSets → common */
+  errorRules: CompiledRule[];
   apiKey: string | undefined;
 }
 
@@ -48,20 +39,6 @@ export interface GatewayConfig extends RawConfig {
 
 export class ConfigError extends Error {}
 
-function compile(list: string[], where: string, needGroups: boolean): RegExp[] {
-  return list.map((src) => {
-    let re: RegExp;
-    try {
-      re = new RegExp(src, 'i');
-    } catch (e) {
-      throw new ConfigError(`${where}: invalid regex ${JSON.stringify(src)}: ${(e as Error).message}`);
-    }
-    if (needGroups && !(src.includes('?<req>') && src.includes('?<max>')))
-      throw new ConfigError(`${where}: overlong pattern must contain named groups (?<req>..) and (?<max>..): ${src}`);
-    return re;
-  });
-}
-
 function expandEnv(s: string | undefined, env: NodeJS.ProcessEnv): string | undefined {
   if (s === undefined) return s;
   return s.replace(/\$\{([A-Z_][A-Z0-9_]*)\}/g, (_, k: string) => {
@@ -75,6 +52,10 @@ export interface LoadOptions {
   requireKeys?: boolean;
   /** cgw 命令不读证书：TLS 路径里的 ${VAR} 不展开 */
   skipTlsPaths?: boolean;
+  /** 已加载的错误分类规则集；不传时按 errorRulesFile（或随代码发布的默认文件）加载 */
+  ruleSets?: RuleSets;
+  /** 解析相对路径 errorRulesFile 的基准目录（配置文件所在目录） */
+  baseDir?: string;
 }
 
 export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env, opts: LoadOptions = {}): GatewayConfig {
@@ -96,22 +77,37 @@ export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env
   if (cfg.security.trustProxyHeaders && cfg.security.trustedProxies.length === 0)
     throw new ConfigError('security.trustProxyHeaders requires security.trustedProxies');
 
+  let ruleSets: RuleSets;
+  try {
+    ruleSets =
+      opts.ruleSets ??
+      loadRuleSets(cfg.errorRulesFile ? (isAbsolute(cfg.errorRulesFile) ? cfg.errorRulesFile : resolve(opts.baseDir ?? process.cwd(), cfg.errorRulesFile)) : undefined);
+  } catch (e) {
+    if (e instanceof ErrorRuleError) throw new ConfigError(e.message);
+    throw e;
+  }
+
   const channelMap = new Map<string, ResolvedChannel>();
   for (const ch of cfg.channels) {
     if (channelMap.has(ch.id)) throw new ConfigError(`duplicate channel id ${ch.id}`);
     const where = `channels.${ch.id}.profile`;
+    const errorRules: CompiledRule[] = [];
+    try {
+      errorRules.push(...ch.profile.errorRules.map((r) => compileRule(r, `${ch.id}(inline)`)));
+    } catch (e) {
+      throw new ConfigError(`${where}.errorRules: ${(e as Error).message}`);
+    }
+    for (const name of [...ch.profile.errorRuleSets.filter((n) => n !== 'common'), 'common']) {
+      const set = ruleSets.get(name);
+      if (!set) throw new ConfigError(`${where}.errorRuleSets: unknown rule set "${name}" (known: ${[...ruleSets.keys()].join(', ')})`);
+      errorRules.push(...set);
+    }
     const apiKey = env[ch.apiKeyEnv] || undefined;
     if (ch.enabled && !apiKey) {
       if (opts.requireKeys) throw new ConfigError(`channel ${ch.id}: environment variable ${ch.apiKeyEnv} is not set (set enabled: false to keep it configured but unused)`);
       warnings.push(`channel ${ch.id}: ${ch.apiKeyEnv} not set`);
     }
-    channelMap.set(ch.id, {
-      ...ch,
-      apiKey,
-      overlong: compile([...BUILTIN_OVERLONG, ...ch.profile.overlongPatterns], `${where}.overlongPatterns`, true),
-      replay: compile([...BUILTIN_REPLAY, ...ch.profile.replayErrorPatterns], `${where}.replayErrorPatterns`, false),
-      signature: compile(ch.profile.signatureErrorPatterns, `${where}.signatureErrorPatterns`, false),
-    });
+    channelMap.set(ch.id, { ...ch, apiKey, errorRules });
   }
 
   const modelMap = new Map<string, ResolvedModel>();
@@ -163,5 +159,5 @@ export function loadConfigFile(path: string, env: NodeJS.ProcessEnv = process.en
   } catch (e) {
     throw new ConfigError(`cannot read config ${path}: ${(e as Error).message}`);
   }
-  return resolveConfig(parseYaml(text), env, opts);
+  return resolveConfig(parseYaml(text), env, { baseDir: dirname(path), ...opts });
 }

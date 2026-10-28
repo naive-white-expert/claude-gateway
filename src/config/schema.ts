@@ -1,9 +1,8 @@
 import { z } from 'zod';
+import { ErrorRuleSchema } from './errorRules.js';
 import { CONCURRENCY_HINT_TEXT, CONCURRENCY_LIMIT_MESSAGE, HISTORY_INCOMPATIBLE_MESSAGE } from './texts.js';
 
 const ms = z.number().int().nonnegative();
-
-const PatternList = z.array(z.string()).default([]);
 
 export const ProfileSchema = z
   .object({
@@ -16,12 +15,9 @@ export const ProfileSchema = z
     metadataUserId: z.enum(['strip', 'passthrough']).default('strip'),
     // 转发前从 tools 中去掉的工具名（上游对某些工具名有特殊处理时用）
     toolStrip: z.array(z.string()).default([]),
-    // 已知的非 Anthropic 超长错误：正则需带命名组 req（请求 token 数）与 max（上限）
-    overlongPatterns: PatternList,
-    // 用户切换模型后才会出现的“回放类”400（会话专题 §4.8）
-    replayErrorPatterns: PatternList,
-    // 签名类错误，措辞不是 cc 能识别的形式时改写（会话专题 §4.2 第 5 条）
-    signatureErrorPatterns: PatternList,
+    // 上游错误分类（config/error-rules.yaml）：引用的规则集与本渠道追加规则；common 规则集总是最后追加
+    errorRuleSets: z.array(z.string()).default([]),
+    errorRules: z.array(ErrorRuleSchema).default([]),
   })
   .strict();
 
@@ -152,6 +148,8 @@ export const ConfigSchema = z
       })
       .strict()
       .default({}),
+    // 错误分类规则文件；默认为随代码发布的 config/error-rules.yaml
+    errorRulesFile: z.string().optional(),
     // 后续里程碑（M4）的配置块，本期不读取
     enhance: z.unknown().optional(),
     mcp: z.unknown().optional(),

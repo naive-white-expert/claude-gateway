@@ -19,6 +19,8 @@ export interface RequestLogEntry {
   ttfbMs?: number | null;
   usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
   errorType?: string | null;
+  /** 上游错误的分类（config/error-rules.yaml），未命中规则为 unknown */
+  errorClass?: string | null;
   diags: Diagnostic[];
 }
 
@@ -29,7 +31,7 @@ export class RequestLog {
     this.db
       .prepare(
         `INSERT INTO request_log (ts, req_id, key_id, ip, session, agent, req_class, model, channel, upstream_model, stream, status, ms, ttfb_ms,
-         input_tokens, output_tokens, cache_read, cache_creation, error_type, diags) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         input_tokens, output_tokens, cache_read, cache_creation, error_type, error_class, diags) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         e.ts,
@@ -51,6 +53,7 @@ export class RequestLog {
         e.usage?.cache_read_input_tokens ?? null,
         e.usage?.cache_creation_input_tokens ?? null,
         e.errorType ?? null,
+        e.errorClass ?? null,
         e.diags.length ? JSON.stringify(e.diags) : null,
       );
   }

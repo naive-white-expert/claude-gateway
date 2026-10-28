@@ -1,14 +1,29 @@
 import type { ResolvedChannel } from '../../config/load.js';
+import { classify, parseUpstreamError, type CompiledRule, type ErrorClass } from '../../config/errorRules.js';
 import type { Diagnostic } from '../../observability/diagnostics.js';
 
-// 上游错误的措辞兼容改写（方案 §1.2、§5.4）。默认原样返回；只改写登记过的模式。
+// 上游错误的分类与响应（方案 §1.2、§5.4）。先按渠道规则用「状态码 + 错误码 / type + 原文」判定类别，
+// 再按类别决定给客户端的响应。没有命中规则的错误原样透传；命中后也只做下表登记的改动：
+//
+//   quota_exhausted                      状态码与原文不变；error.type 设为 billing_error；加 x-should-retry: false
+//   auth_failed / model_unavailable /
+//   invalid_request                      状态码与错误体不变；加 x-should-retry: false
+//   rate_limited / overloaded            状态码与错误体不变；上游没给 retry-after 时按规则补上
+//   context_overflow                     cc 已能识别的措辞原样转发；否则改写为 prompt is too long
+//   history_incompatible                 用户切换模型后改写为已确认的建议文案；未切换时原样转发
+//   signature_invalid                    改写为 cc 能识别的签名错误措辞（cc 会剥掉 thinking 重试）
 
 export function errorBody(type: string, message: string): string {
   return JSON.stringify({ type: 'error', error: { type, message } });
 }
 
-/** cc 能识别的超长措辞（会话专题 §2.3）：命中时原样转发。 */
+export function overlongMessage(req: number | string, max: number | string): string {
+  return `prompt is too long: ${req} tokens > ${max} maximum`;
+}
+
+/** cc 能识别的超长措辞（会话专题 §2.3）。 */
 const CC_OVERLONG = /prompt is too long|input is too long for requested model|context window|input length and `?max_tokens`? exceed context limit/i;
+
 /** cc 能识别的签名类措辞（会话专题 §2.1）。 */
 function ccRecognizesSignature(msg: string): boolean {
   const s = msg.replace(/`/g, '').toLowerCase();
@@ -20,65 +35,99 @@ function ccRecognizesSignature(msg: string): boolean {
   );
 }
 
-export function upstreamErrorMessage(text: string): string | null {
-  try {
-    const j = JSON.parse(text) as { error?: { message?: unknown }; message?: unknown; msg?: unknown };
-    const m = j.error?.message ?? j.message ?? j.msg;
-    return typeof m === 'string' ? m : null;
-  } catch {
-    return null;
-  }
-}
-
-export type ErrorRewrite =
-  | { kind: 'overlong'; status: 400; body: string; diag: Diagnostic }
-  | { kind: 'signature'; status: 400; body: string; diag: Diagnostic }
-  | { kind: 'history_incompatible'; status: 400; body: string; diag: Diagnostic }
-  | null;
-
-export interface RewriteContext {
+export interface ErrorContext {
   channel: ResolvedChannel;
   switched: boolean;
   /** 已填好变量的“历史不兼容”文案 */
   historyMessage: () => string;
 }
 
-export function overlongMessage(req: number | string, max: number | string): string {
-  return `prompt is too long: ${req} tokens > ${max} maximum`;
+export interface ErrorDecision {
+  errorClass: ErrorClass;
+  ruleId: string | null;
+  status: number;
+  /** 发给客户端的错误体；与上游相同时为原文 */
+  body: string;
+  /** 在上游响应头之上追加 / 覆盖的头 */
+  headers: Record<string, string>;
+  /** 是否改动了错误体（只加头不算） */
+  bodyRewritten: boolean;
+  diag: Diagnostic;
 }
 
-export function rewriteUpstreamError(status: number, text: string, ctx: RewriteContext): ErrorRewrite {
-  if (status < 400 || status >= 500) return null;
-  const msg = upstreamErrorMessage(text);
-  if (!msg) return null;
+const NO_RETRY_CLASSES: ReadonlySet<ErrorClass> = new Set(['quota_exhausted', 'auth_failed', 'model_unavailable', 'invalid_request']);
 
-  if (!CC_OVERLONG.test(msg)) {
-    for (const re of ctx.channel.overlong) {
-      const m = re.exec(msg);
-      if (m?.groups?.req && m.groups.max)
-        return {
-          kind: 'overlong',
-          status: 400,
-          body: errorBody('invalid_request_error', overlongMessage(m.groups.req, m.groups.max)),
-          diag: { code: 'overlong_error_rewritten', action: 'rewrite', field: 'error.message', detail: `upstream ${status}: ${msg.slice(0, 160)}` },
-        };
+function setErrorType(text: string, type: string): string | null {
+  try {
+    const j = JSON.parse(text) as Record<string, any>;
+    if (!j || typeof j !== 'object') return null;
+    if (j.error && typeof j.error === 'object') {
+      j.error.type = type;
+      if (j.type === undefined) return JSON.stringify({ type: 'error', ...j });
+      return JSON.stringify(j);
     }
+    return null;
+  } catch {
+    return null;
   }
+}
 
-  if (ctx.switched && ctx.channel.replay.some((re) => re.test(msg)))
-    return {
-      kind: 'history_incompatible',
-      status: 400,
-      body: errorBody('invalid_request_error', ctx.historyMessage()),
-      diag: { code: 'cgw_history_incompatible', action: 'rewrite', field: 'error.message', detail: `upstream ${status}: ${msg.slice(0, 160)}` },
-    };
+export function decideUpstreamError(status: number, text: string, upstreamHeaders: Record<string, string>, ctx: ErrorContext): ErrorDecision {
+  const err = parseUpstreamError(status, text);
+  const hit = classify(err, ctx.channel.errorRules);
+  const errorClass: ErrorClass = hit?.rule.class ?? 'unknown';
+  const rule: CompiledRule | undefined = hit?.rule;
+  const detail = `class=${errorClass} rule=${rule ? `${rule.set}/${rule.id}` : '-'} status=${status} code=${err.code ?? '-'} type=${err.type ?? '-'}`;
+  const decision: ErrorDecision = {
+    errorClass,
+    ruleId: rule ? `${rule.set}/${rule.id}` : null,
+    status,
+    body: text,
+    headers: {},
+    bodyRewritten: false,
+    diag: { code: 'upstream_error_classified', action: 'observe', detail },
+  };
+  if (!rule) return decision;
+  const msg = err.message ?? '';
+  const rewrite = (code: string, newStatus: number, body: string): ErrorDecision => ({
+    ...decision,
+    status: newStatus,
+    body,
+    bodyRewritten: true,
+    diag: { code, action: 'rewrite', field: 'error', detail },
+  });
 
-  if (!ccRecognizesSignature(msg) && ctx.channel.signature.some((re) => re.test(msg)))
-    return {
-      kind: 'signature',
-      status: 400,
-      body: errorBody('invalid_request_error', 'messages.0.content.0: Invalid `signature` in `thinking` block'),
-      diag: { code: 'signature_error_rewritten', action: 'rewrite', field: 'error.message', detail: `upstream ${status}: ${msg.slice(0, 160)}` },
-    };
-  return null;
+  switch (rule.class) {
+    case 'context_overflow': {
+      if (CC_OVERLONG.test(msg)) return decision;
+      const g = hit!.groups;
+      const message = g?.req && g?.max ? overlongMessage(g.req, g.max) : 'prompt is too long';
+      return rewrite('overlong_error_rewritten', 400, errorBody('invalid_request_error', message));
+    }
+    case 'history_incompatible':
+      if (!ctx.switched) return decision;
+      return rewrite('cgw_history_incompatible', 400, errorBody('invalid_request_error', ctx.historyMessage()));
+    case 'signature_invalid':
+      if (ccRecognizesSignature(msg)) return decision;
+      return rewrite('signature_error_rewritten', 400, errorBody('invalid_request_error', 'messages.0.content.0: Invalid `signature` in `thinking` block'));
+    case 'quota_exhausted': {
+      const body = setErrorType(text, 'billing_error');
+      return {
+        ...decision,
+        body: body ?? text,
+        bodyRewritten: body !== null,
+        headers: { 'x-should-retry': 'false' },
+        diag: { code: 'quota_exhausted_no_retry', action: 'rewrite', field: 'error.type,x-should-retry', detail },
+      };
+    }
+    case 'rate_limited':
+    case 'overloaded':
+      if (rule.retryAfterSec && upstreamHeaders['retry-after'] === undefined)
+        return { ...decision, headers: { 'retry-after': String(rule.retryAfterSec) }, diag: { code: 'retry_after_added', action: 'append', field: 'retry-after', detail } };
+      return decision;
+    default:
+      if (NO_RETRY_CLASSES.has(rule.class))
+        return { ...decision, headers: { 'x-should-retry': 'false' }, diag: { code: 'no_retry_header_added', action: 'append', field: 'x-should-retry', detail } };
+      return decision;
+  }
 }

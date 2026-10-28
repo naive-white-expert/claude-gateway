@@ -98,6 +98,8 @@ async function main(argv: string[]): Promise<void> {
         const age = Date.now() - Date.parse(s.updatedAt);
         console.log(`gateway pid ${s.pid}, started ${s.startedAt}, snapshot ${Math.round(age / 1000)}s ago${age > 10_000 ? ' (STALE: gateway not running?)' : ''}`);
         console.log(`requests ${s.stats.requests}, auth failures ${s.stats.authFailures}, errors ${s.stats.errors}, banned IPs ${s.bannedIps}`);
+        const ec = Object.entries<number>(s.stats.errorClasses ?? {});
+        if (ec.length) console.log(`upstream error classes since start: ${ec.map(([k, v]) => `${k}=${v}`).join(', ')}`);
         console.log('model\tchannel\tin-flight\tqueued\tlimit');
         for (const [id, c] of Object.entries<any>(s.concurrency)) console.log(`${id}\t${c.channel}\t${c.inFlight}\t${c.queued}\t${c.limit ?? '-'}`);
       } else console.log('no status snapshot (gateway not running?)');
@@ -110,6 +112,11 @@ async function main(argv: string[]): Promise<void> {
         .all(Date.now() - 3600_000) as any[];
       console.log('\nlast 1h: model\trequests\terrors\tavg_ms\tinput\tcache_read\toutput');
       for (const r of rows) console.log([r.model, r.n, r.errs, r.avg_ms, r.inp ?? 0, r.cr ?? 0, r.outp ?? 0].join('\t'));
+      const classes = db
+        .prepare(`SELECT channel, error_class, status, COUNT(*) n FROM request_log WHERE ts > ? AND error_class IS NOT NULL GROUP BY channel, error_class, status ORDER BY n DESC`)
+        .all(Date.now() - 24 * 3600_000) as any[];
+      console.log('\nupstream errors last 24h: channel\tclass\tstatus\tcount');
+      for (const r of classes) console.log([r.channel, r.error_class, r.status, r.n].join('\t'));
       const fails = db.prepare('SELECT COUNT(*) n FROM auth_failures WHERE ts > ?').get(Date.now() - 3600_000) as any;
       console.log(`auth failures last 1h: ${fails.n}`);
       db.close();

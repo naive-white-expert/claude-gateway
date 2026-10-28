@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS request_log (
   cache_read INTEGER,
   cache_creation INTEGER,
   error_type TEXT,
+  error_class TEXT,
   diags TEXT
 );
 CREATE INDEX IF NOT EXISTS request_log_ts ON request_log(ts);
@@ -66,6 +67,8 @@ export function openDb(path: string): Db {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 3000;');
   db.exec(SCHEMA);
+  const cols = (db.prepare('PRAGMA table_info(request_log)').all() as { name: string }[]).map((c) => c.name);
+  if (!cols.includes('error_class')) db.exec('ALTER TABLE request_log ADD COLUMN error_class TEXT');
   return db;
 }
 

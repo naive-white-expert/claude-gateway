@@ -47,9 +47,8 @@ security:
 #   countTokens           upstream（转发上游原生 count_tokens；Coding Plan 渠道不会转发）/ estimate（本地估算）
 #   metadataUserId        strip（默认，cc 的 user_id 含设备与账号标识）/ passthrough
 #   toolStrip             转发前从 tools 中去掉的工具名（默认空）
-#   overlongPatterns      追加的非 Anthropic 超长错误正则（命名组 req、max），内置规则见 src/config/load.ts
-#   replayErrorPatterns   追加的“切换后历史不兼容”错误正则
-#   signatureErrorPatterns  追加的签名类错误正则（改写为 cc 能识别的措辞）
+#   errorRuleSets         上游错误分类规则集（config/error-rules.yaml 中的 sets 名；common 总是最后追加）
+#   errorRules            本渠道追加的分类规则（格式同规则文件，优先于规则集匹配）
 channels:
   - id: deepseek
     protocol: anthropic_messages
@@ -64,6 +63,7 @@ channels:
       redactedThinking: unsupported   # M0：redacted_thinking 返回 422
       timeouts: { connectMs: 10000, firstByteMs: 600000, idleMs: 120000 }
       countTokens: upstream       # M0：原生 /v1/messages/count_tokens 可用
+      errorRuleSets: [deepseek]       # 上游错误分类：状态码 + 错误码 + 原文组合判定（config/error-rules.yaml）
       metadataUserId: strip
 
   - id: zhipu-api
@@ -79,6 +79,7 @@ channels:
       redactedThinking: supported
       timeouts: { connectMs: 10000, firstByteMs: 600000, idleMs: 120000 }
       countTokens: estimate
+      errorRuleSets: [zhipu]
       toolStrip: [ToolSearch]
 
   - id: zhipu-coding
@@ -95,6 +96,7 @@ channels:
       redactedThinking: supported # M0：redacted_thinking 返回 200
       timeouts: { connectMs: 10000, firstByteMs: 600000, idleMs: 120000 }
       countTokens: estimate       # M0：上游 count_tokens 可用，但 Coding Plan 渠道不转发（方案 §6.3）
+      errorRuleSets: [zhipu]
       toolStrip: [ToolSearch]     # M0：tools 里有名为 ToolSearch 的工具时，上游只保留这一个工具、其余静默丢弃
     quota:
       connector: zhipu-coding     # M2：只读展示 5h / 周积分
@@ -113,6 +115,7 @@ channels:
       redactedThinking: supported # M0：redacted_thinking 返回 200
       timeouts: { connectMs: 10000, firstByteMs: 600000, idleMs: 120000 }
       countTokens: estimate       # M0：上游 count_tokens 可用，但 Coding Plan 渠道不转发（方案 §6.3）
+      errorRuleSets: [ark]
     quota:
       connector: ark-coding
 

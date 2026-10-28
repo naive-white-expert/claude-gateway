@@ -1,0 +1,234 @@
+# 上游错误分类规则（方案 §5.4）。网关按「HTTP 状态码 + 响应体错误码 / type + 报错原文」的组合判定错误类别，
+# 再按类别决定给客户端的响应。没有命中任何规则的错误原样透传。
+#
+# 渠道 profile 用 errorRuleSets 引用这里的规则集（common 总是最后追加），也可以用 errorRules 写本渠道的追加规则。
+# 同一渠道内按顺序匹配，先命中先用：profile.errorRules → errorRuleSets（按列出顺序）→ common。
+#
+# 规则字段：
+#   id             唯一标识，写入诊断日志
+#   class          错误类别：quota_exhausted（余额或额度耗尽）、rate_limited（限流）、overloaded（上游过载）、
+#                  context_overflow（上下文超长）、auth_failed（认证失败）、model_unavailable（模型不存在或不在套餐）、
+#                  history_incompatible（切换后历史不兼容）、signature_invalid（thinking 签名无效）、invalid_request（参数错误）
+#   match          以下条件同时满足才命中；除 status 外至少写一项（只看状态码不足以区分错误）
+#     status       HTTP 状态码列表
+#     code         响应体 error.code（或顶层 code）列表，按字符串比较
+#     type         响应体 error.type 列表
+#     message      报错原文的正则（不区分大小写）。context_overflow 规则可带命名组 req（请求 token 数）与 max（上限）
+#   retryAfterSec  可选，只用于 rate_limited / overloaded：上游没给 retry-after 时补上（1–60；超过 60 cc 不再重试）
+#   source         依据：实测（附 docs/M0-渠道行为.md 或 fixture）或官方文档链接；「文档」表示尚未实测
+#
+# 社区补充规则时请附 source；能拿到真实错误体时同时加脱敏 fixture 与单元测试。
+
+sets:
+  common:
+    - id: common-cc-overlong
+      class: context_overflow
+      match:
+        status: [400, 413]
+        message: "prompt is too long|input is too long for requested model|context window|input length and `?max_tokens`? exceed context limit"
+      source: cc 能识别的 Anthropic 措辞（会话专题 §2.3），原样转发
+    - id: common-openai-overlong
+      class: context_overflow
+      match:
+        status: [400]
+        message: "maximum context length is (?<max>\\d+) tokens\\. However, you requested (?<req>\\d+) tokens"
+      source: 实测（DeepSeek 官方，test/fixtures/deepseek/error-overlong.json）；OpenAI 兼容措辞
+
+  deepseek:
+    - id: deepseek-thinking-must-pass-back
+      class: history_incompatible
+      match:
+        status: [400]
+        message: "content\\[\\]\\.thinking.{0,3} in the thinking mode must be passed back"
+      source: 实测（test/fixtures/deepseek/error-thinking-must-be-passed-back.json）
+    - id: deepseek-redacted-thinking
+      class: history_incompatible
+      match:
+        status: [422]
+        message: "unknown variant .redacted_thinking."
+      source: 实测（test/fixtures/deepseek/error-redacted-thinking-422.json）
+    - id: deepseek-unknown-model
+      class: model_unavailable
+      match:
+        status: [400]
+        message: "^The supported API model names are"
+      source: 实测（test/fixtures/deepseek/error-unknown-model.json）
+    - id: deepseek-auth
+      class: auth_failed
+      match:
+        status: [401]
+        type: [authentication_error]
+      source: 实测（test/fixtures/deepseek/error-auth-invalid.json）
+    - id: deepseek-insufficient-balance
+      class: quota_exhausted
+      match:
+        status: [402]
+        message: "insufficient balance"
+      source: 文档 https://api-docs.deepseek.com/quick_start/error_codes（402 Insufficient Balance）
+    - id: deepseek-rate-limit
+      class: rate_limited
+      match:
+        status: [429]
+        message: "rate limit"
+      retryAfterSec: 5
+      source: 文档 https://api-docs.deepseek.com/quick_start/error_codes（429 Rate Limit Reached）
+    - id: deepseek-overloaded
+      class: overloaded
+      match:
+        status: [503]
+        message: "overload|busy"
+      retryAfterSec: 10
+      source: 文档 https://api-docs.deepseek.com/quick_start/error_codes（503 Server Overloaded）
+
+  # 智谱按量与智谱 Coding Plan 共用（同一端点、同一套业务错误码）
+  zhipu:
+    - id: zhipu-1113-insufficient-balance
+      class: quota_exhausted
+      match:
+        status: [429]
+        code: ["1113"]
+      source: 实测（test/fixtures/zhipu-api/error-1113-insufficient-balance.json）；文档 https://docs.bigmodel.cn/cn/api/api-code
+    - id: zhipu-plan-quota-reached
+      class: quota_exhausted
+      match:
+        status: [429]
+        code: ["1308", "1310", "1316", "1317", "1318", "1319", "1320", "1321"]
+      source: 文档 https://docs.bigmodel.cn/cn/api/api-code（套餐 5 小时 / 每周 / 每月上限，原文含重置时间）
+    - id: zhipu-plan-expired
+      class: quota_exhausted
+      match:
+        status: [429]
+        code: ["1309", "1314"]
+      source: 文档 https://docs.bigmodel.cn/cn/api/api-code（套餐到期 / 企业套餐失效）
+    - id: zhipu-fair-use-restricted
+      class: quota_exhausted
+      match:
+        status: [429]
+        code: ["1313"]
+      source: 文档 https://docs.bigmodel.cn/cn/api/api-code（公平使用策略限制，需在控制台申请解除，重试无效）
+    - id: zhipu-plan-model-not-included
+      class: model_unavailable
+      match:
+        status: [429]
+        code: ["1311"]
+      source: 文档 https://docs.bigmodel.cn/cn/api/api-code（当前订阅套餐暂未开放该模型）
+    - id: zhipu-key-plan-mismatch
+      class: auth_failed
+      match:
+        status: [429]
+        code: ["1315"]
+      source: 文档 https://docs.bigmodel.cn/cn/api/api-code（该 key 仅限企业编程套餐）
+    - id: zhipu-1302-rate-limit
+      class: rate_limited
+      match:
+        status: [429]
+        code: ["1302"]
+      retryAfterSec: 5
+      source: 文档 https://docs.bigmodel.cn/cn/api/api-code（账户速率 / 并发限制）
+    - id: zhipu-1305-overloaded
+      class: overloaded
+      match:
+        status: [429, 529]
+        code: ["1305"]
+      retryAfterSec: 10
+      source: 文档（429）；实测 Anthropic 端点免费模型返回 529（docs/M0-渠道行为.md §3.2）
+    - id: zhipu-1261-prompt-too-long
+      class: context_overflow
+      match:
+        status: [400]
+        code: ["1261"]
+      source: 文档 https://docs.bigmodel.cn/cn/api/api-code（Prompt 超长；原文不含 token 数）
+    - id: zhipu-1211-unknown-model
+      class: model_unavailable
+      match:
+        status: [400]
+        code: ["1211"]
+      source: 实测（test/fixtures/zhipu-coding/error-unknown-model.json）
+    - id: zhipu-invalid-parameter
+      class: invalid_request
+      match:
+        status: [400]
+        code: ["1210", "1212", "1213", "1214", "1215", "1301"]
+      source: 实测 1210（test/fixtures/zhipu-coding/error-max-tokens-over.json、zhipu-api/error-1210-thinking-disabled.json）；其余为文档
+    - id: zhipu-auth
+      class: auth_failed
+      match:
+        status: [401]
+        message: "令牌已过期或验证不正确|身份验证|authorization|authentication"
+      source: 实测（docs/M0-渠道行为.md §3，401 的 error.type 为数字码、无 error.code）
+
+  # 火山方舟（Coding Plan 与按量共用错误码；QuotaExceeded 一个错误码有多种含义，靠原文区分）
+  ark:
+    - id: ark-unsupported-model
+      class: model_unavailable
+      match:
+        status: [404]
+        code: [UnsupportedModel, ModelNotOpen, InvalidEndpointOrModel.NotFound, InvalidEndpointOrModel.ModelIDAccessDisabled]
+      source: 实测 UnsupportedModel（test/fixtures/ark-coding/error-unsupported-model-404.json）；其余为文档 https://www.volcengine.com/docs/82379/1299023
+    - id: ark-plan-usage-quota
+      class: quota_exhausted
+      match:
+        status: [429]
+        code: [QuotaExceeded]
+        message: "5-hour|weekly|monthly|usage quota"
+      source: 文档 https://www.volcengine.com/docs/82379/1299023（Coding Plan 5 小时 / 周 / 月限额，原文含重置时间）
+    - id: ark-free-trial-quota
+      class: quota_exhausted
+      match:
+        status: [429]
+        code: [QuotaExceeded]
+        message: "free trial quota"
+      source: 文档 https://www.volcengine.com/docs/82379/1299023
+    - id: ark-queued-tasks-limit
+      class: rate_limited
+      match:
+        status: [429]
+        code: [QuotaExceeded]
+        message: "^The request has exceeded the quota"
+      retryAfterSec: 5
+      source: 文档 https://www.volcengine.com/docs/82379/1299023（排队中任务数超限，稍后重试；与 AccountQuotaExceeded 原文相同、错误码不同）
+    - id: ark-account-quota
+      class: quota_exhausted
+      match:
+        status: [429]
+        code: [AccountQuotaExceeded, QuotaExceeded.AgentPlanQuotaExceeded, SetLimitExceeded, ModelAccountTpdRateLimitExceeded]
+      source: 文档 https://www.volcengine.com/docs/82379/1299023（账户额度不足 / 套餐耗尽 / 用户设置的用量上限 / 每日 token 配额）
+    - id: ark-account-overdue
+      class: quota_exhausted
+      match:
+        status: [403]
+        code: [AccountOverdueError, OperationDenied.ServiceOverdue]
+      source: 文档 https://www.volcengine.com/docs/82379/1299023（欠费）
+    - id: ark-rate-limit
+      class: rate_limited
+      match:
+        status: [429]
+        code:
+          - RateLimitExceeded.EndpointRPMExceeded
+          - RateLimitExceeded.EndpointTPMExceeded
+          - ModelAccountRpmRateLimitExceeded
+          - ModelAccountTpmRateLimitExceeded
+          - AccountRateLimitExceeded
+          - APIAccountRpmRateLimitExceeded
+          - InflightBatchsizeExceeded
+      retryAfterSec: 5
+      source: 文档 https://www.volcengine.com/docs/82379/1299023
+    - id: ark-server-overloaded
+      class: overloaded
+      match:
+        status: [429, 503]
+        code: [ServerOverloaded]
+      retryAfterSec: 10
+      source: 文档 https://www.volcengine.com/docs/82379/1299023
+    - id: ark-out-of-context
+      class: context_overflow
+      match:
+        status: [400]
+        code: [OutofContextError]
+      source: 文档 https://www.volcengine.com/docs/82379/1299023（含图片时总 token 超过上下文；原文不含 token 数）
+    - id: ark-auth
+      class: auth_failed
+      match:
+        status: [401]
+        code: [AuthenticationError]
+      source: 实测（docs/M0-渠道行为.md §3）

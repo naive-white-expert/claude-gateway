@@ -16,7 +16,7 @@ npm ci --no-audit --no-fund
 npm run build
 
 rsync -az --delete -e "ssh -o ConnectTimeout=10" \
-  --include='/dist/***' --include='/deploy/***' --include='/config/' --include='/config/gateway.example.yaml' \
+  --include='/dist/***' --include='/deploy/***' --include='/config/' --include='/config/gateway.example.yaml' --include='/config/error-rules.yaml' \
   --include='/package.json' --include='/package-lock.json' --include='/.npmrc' --include='/LICENSE' \
   --exclude='*' ./ "$HOST:/opt/claude-gateway/"
 
