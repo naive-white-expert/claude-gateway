@@ -75,12 +75,12 @@ channels:
     profile:
       authHeader: x-api-key       # M0（仅到 401 阶段）：x-api-key 与 Bearer 均被识别
       betaStrip: []
-      thinkingReplay: passthrough # 以下三项按同端点 zhipu-coding 的实测推定，按量 key 未单独验证
+      thinkingReplay: passthrough # 本项与 redactedThinking 按同端点 zhipu-coding 的实测推定，按量 key 未单独验证
       redactedThinking: supported
       timeouts: { connectMs: 10000, firstByteMs: 600000, idleMs: 120000 }
       countTokens: estimate
       errorRuleSets: [zhipu]
-      toolStrip: [ToolSearch]
+      toolStrip: [ToolSearch]     # M0（按量 key 实测）：与 zhipu-coding 相同，有 ToolSearch 时上游丢弃其余工具
 
   - id: zhipu-coding
     protocol: anthropic_messages
