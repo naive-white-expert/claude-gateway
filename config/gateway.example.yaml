@@ -75,14 +75,15 @@ channels:
     profile:
       authHeader: x-api-key       # M0（仅到 401 阶段）：x-api-key 与 Bearer 均被识别
       betaStrip: []
-      thinkingReplay: strip-foreign   # 待有 key 后 M0 实测
-      redactedThinking: unsupported
+      thinkingReplay: passthrough # 以下三项按同端点 zhipu-coding 的实测推定，按量 key 未单独验证
+      redactedThinking: supported
       timeouts: { connectMs: 10000, firstByteMs: 600000, idleMs: 120000 }
       countTokens: estimate
+      toolStrip: [ToolSearch]
 
   - id: zhipu-coding
     protocol: anthropic_messages
-    baseUrl: https://open.bigmodel.cn/api/anthropic   # 与 zhipu-api 同一 URL；M0：用 Coding Plan 专用 key 调用计入套餐积分，计费由 key 决定
+    baseUrl: https://open.bigmodel.cn/api/anthropic   # 与 zhipu-api 同一 URL；M0：同一账号的两把 key，Coding Plan key 计入套餐积分、按量 key 扣账户余额，计费由 key 决定
     billing: coding-plan
     interactiveOnly: true         # 只承载 cc 发起的交互请求，网关自发调用不走此渠道（方案 §6.3）
     apiKeyEnv: ZHIPU_CODING_API_KEY

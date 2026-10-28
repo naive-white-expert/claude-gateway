@@ -114,7 +114,7 @@ describe('error rewrites', () => {
   it('passes GLM errors through unchanged (no overlong / replay / signature rule matches)', () => {
     const ex = loadConfigFile(join(import.meta.dirname, '../config/gateway.example.yaml'), {});
     const zctx = { channel: ex.channelMap.get('zhipu-coding')!, switched: true, historyMessage: () => 'HISTORY' };
-    for (const fx of ['zhipu-coding/error-unknown-model.json', 'zhipu-coding/error-max-tokens-over.json']) {
+    for (const fx of ['zhipu-coding/error-unknown-model.json', 'zhipu-coding/error-max-tokens-over.json', 'zhipu-api/error-1113-insufficient-balance.json', 'zhipu-api/error-1210-thinking-disabled.json']) {
       const f = JSON.parse(fixture(fx));
       expect(rewriteUpstreamError(f.status, JSON.stringify(f.body), zctx)).toBeNull();
     }

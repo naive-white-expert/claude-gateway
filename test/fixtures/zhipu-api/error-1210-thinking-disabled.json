@@ -1,0 +1,12 @@
+{
+  "status": 400,
+  "body": {
+    "type": "error",
+    "error": {
+      "type": "invalid_request_error",
+      "code": "1210",
+      "message": "[1210][该模型始终思考，不支持关闭思考；请使用 low、high 或 max。][000000000000000000000000000000]"
+    },
+    "request_id": "000000000000000000000000000000"
+  }
+}
