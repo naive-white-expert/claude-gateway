@@ -3,7 +3,7 @@
 // 用法：node scripts/m0/probe.mjs --channel deepseek --out <目录> [--cases a,b,c]
 // 上游 key 只从环境变量读取（见 CHANNELS[*].keyEnv），不写入输出。输出只含状态码、
 // 白名单响应头、错误体与结构摘要（thinking / 正文只记长度与前 80 字符）。
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
@@ -46,7 +46,7 @@ function summarizeContent(content) {
       o.thinkingLen = b.thinking?.length ?? 0;
       o.signature = b.signature === undefined ? 'absent' : b.signature === '' ? 'empty' : `len${b.signature.length}`;
     }
-    if (b.type === 'text') { o.textLen = b.text.length; o.textHead = b.text.slice(0, 80); o.hasThinkTag = /<\/?think>/.test(b.text); }
+    if (b.type === 'text') { o.textLen = b.text.length; o.textHead = b.text.slice(0, Number(args.textHead ?? 80)); o.hasThinkTag = /<\/?think>/.test(b.text); }
     if (b.type === 'tool_use') { o.id = b.id; o.idFormatOk = /^[a-zA-Z0-9_-]+$/.test(b.id); o.name = b.name; }
     if (b.type === 'redacted_thinking') o.dataLen = b.data?.length ?? 0;
     return o;
@@ -223,8 +223,22 @@ const CASES = {
     // 64x64 纯红 PNG：答对颜色且 input_tokens 明显大于纯文本，才算图片真的被处理（V4 Pro 静默丢图时两者都不满足）
     const png = solidPng(64, 64, (args.imageRgb ?? '220,20,20').split(',').map(Number));
     const q = 'What color is this image? Answer with one word.';
-    await call('image_color', { body: { model: M, max_tokens: Number(args.imageMaxTokens ?? 32), thinking: { type: 'disabled' }, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }, { type: 'text', text: q }] }] } });
-    await call('image_color_text_only', { body: { model: M, max_tokens: 8, thinking: { type: 'disabled' }, messages: [user(q)] } });
+    const thinking = args.imageThinkingOmit === 'true' ? {} : { thinking: { type: 'disabled' } };
+    await call('image_color', { body: { model: M, max_tokens: Number(args.imageMaxTokens ?? 32), ...thinking, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } }, { type: 'text', text: q }] }] } });
+    if (args.imageNoBaseline !== 'true') await call('image_color_text_only', { body: { model: M, max_tokens: 8, thinking: { type: 'disabled' }, messages: [user(q)] } });
+  },
+  async cc_tools() {
+    // 用 cc 真实发送的工具定义（--ccToolsFile 指向抓包得到的请求体，不入库），参数与 cc 相同（adaptive thinking + effort max），测：
+    // 上游是否接受这些 schema、带 ToolSearch 时是否丢掉其余工具（让模型列出可见工具名）、思维链是否混进正文
+    const tools = JSON.parse(readFileSync(args.ccToolsFile, 'utf8')).tools;
+    const q = [user('List the exact names of every tool you can call, comma separated, nothing else.')];
+    await call('cc_tools_list', { body: { model: M, max_tokens: Number(args.ccToolsMaxTokens ?? 2000), thinking: { type: 'adaptive' }, output_config: { effort: 'max' }, tools, messages: q } });
+  },
+  async cc_tools_count() {
+    const tools = JSON.parse(readFileSync(args.ccToolsFile, 'utf8')).tools;
+    const q = [user('List the exact names of every tool you can call, comma separated, nothing else.')];
+    await call('cc_tools_count_without_toolsearch', { path: '/v1/messages/count_tokens', body: { model: M, tools: tools.filter((t) => t.name !== 'ToolSearch'), messages: q } });
+    await call('cc_tools_count_with_toolsearch', { path: '/v1/messages/count_tokens', body: { model: M, tools, messages: q } });
   },
   async overlong() {
     const n = Number(args.overlongWords ?? 1100000);

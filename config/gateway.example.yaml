@@ -179,6 +179,51 @@ models:
     inputModalities: [text, image]  # M0：传图能正确识别
     thinking: optional              # M0：disabled 可关闭
     maxEffort: max
+  claude-gw-km3-hs:
+    displayName: Kimi K3（火山）
+    channel: ark-coding
+    upstreamModel: kimi-k3
+    contextWindow: 1000000          # 官方 1024k
+    maxOutputTokens: 131072         # 官方 128k
+    inputModalities: [text, image]  # M0：传图能正确识别
+    thinking: optional              # 官方称不支持关闭；M0：disabled 返回 200 且无 thinking
+    maxEffort: max
+  claude-gw-km31pro-hs:
+    displayName: Kimi K3.1 Pro（火山）
+    channel: ark-coding
+    upstreamModel: kimi-k3.1-pro
+    contextWindow: 1000000          # 官方 1024k
+    maxOutputTokens: 131072         # 官方 128k
+    inputModalities: [text, image]  # M0：传图能正确识别（官方说明未列图片）
+    thinking: always-on             # M0：disabled 返回 400（`temperature` only 0.6 is allowed）
+    maxEffort: max
+  claude-gw-km28-hs:
+    displayName: Kimi K2.8 Preview（火山）
+    channel: ark-coding
+    upstreamModel: kimi-k2.8-preview
+    contextWindow: 1000000          # 官方 1024k
+    maxOutputTokens: 131072         # 官方写最大输出 1024k，这里按其他 Kimi 保守取 128k
+    inputModalities: [text, image]  # M0：传图能正确识别
+    thinking: optional              # M0：disabled 返回 200
+    maxEffort: max
+  claude-gw-zp53-hs:
+    displayName: GLM-5.3（火山）
+    channel: ark-coding
+    upstreamModel: glm-5.3
+    contextWindow: 1000000          # 官方 1024k
+    maxOutputTokens: 131072         # 官方 128k
+    inputModalities: [text]         # M0：传图返回 400 Model only support text input
+    thinking: always-on             # 官方：默认开启思考，不支持关闭
+    maxEffort: max
+  claude-gw-zp53flash-hs:
+    displayName: GLM-5.3-Flash（火山）
+    channel: ark-coding
+    upstreamModel: glm-5.3-flash
+    contextWindow: 1000000          # 官方 1024k
+    maxOutputTokens: 131072         # 官方 128k
+    inputModalities: [text, image]  # M0：传图能正确识别
+    thinking: always-on             # M0：disabled 返回 400（thinking.type `disabled` is not supported）
+    maxEffort: max
   claude-gw-sd21pro-hs:
     displayName: Doubao Seed 2.1 Pro（火山）
     channel: ark-coding

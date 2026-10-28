@@ -1,0 +1,11 @@
+{
+  "status": 400,
+  "body": {
+    "error": {
+      "code": "InvalidParameter",
+      "message": "Model only support text input Request id: 00000000000000000000000000000000000000000000000000000",
+      "param": "",
+      "type": "BadRequest"
+    }
+  }
+}

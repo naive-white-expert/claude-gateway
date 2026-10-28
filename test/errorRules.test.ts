@@ -51,6 +51,8 @@ const CASES: { set: string; status: number; body: string; rule: string; real?: b
   { set: 'ark', status: 429, body: ark(429, 'ModelAccountTpmRateLimitExceeded', 'TPM (Tokens Per Minute) limit of the model is exceeded. Request ID: x.'), rule: 'ark/ark-rate-limit' },
   { set: 'ark', status: 429, body: ark(429, 'ServerOverloaded', 'The service is currently unable to handle additional requests due to server overload.'), rule: 'ark/ark-server-overloaded' },
   { set: 'ark', status: 400, body: ark(400, 'OutofContextError', 'Total tokens of image and text exceed max message tokens.'), rule: 'ark/ark-out-of-context' },
+  { set: 'ark', ...fx('ark-coding/error-text-only-model-400.json'), rule: 'ark/ark-invalid-parameter', real: true },
+  { set: 'ark', ...fx('ark-coding/error-thinking-disabled-unsupported-400.json'), rule: 'ark/ark-invalid-parameter', real: true },
   { set: 'ark', status: 401, body: ark(401, 'AuthenticationError', 'The API key format is incorrect. Request id: x', 'Unauthorized'), rule: 'ark/ark-auth', real: true },
 ];
 

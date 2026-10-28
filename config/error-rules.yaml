@@ -226,6 +226,12 @@ sets:
         status: [400]
         code: [OutofContextError]
       source: 文档 https://www.volcengine.com/docs/82379/1299023（含图片时总 token 超过上下文；原文不含 token 数）
+    - id: ark-invalid-parameter
+      class: invalid_request
+      match:
+        status: [400]
+        code: [InvalidParameter]
+      source: 实测（test/fixtures/ark-coding/error-text-only-model-400.json、error-thinking-disabled-unsupported-400.json）
     - id: ark-auth
       class: auth_failed
       match:
